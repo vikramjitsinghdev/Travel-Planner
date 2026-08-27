@@ -1,18 +1,21 @@
-# mood_keywords.py
-
 import re
 
 
 class MoodKeywords:
     """
-    Stores the travel mood vocabulary and provides methods for:
+    Helper class for the MoodAgent.
 
-    1. Accessing mood categories
-    2. Searching keywords
-    3. Traversing the keyword library
-    4. Detecting keywords inside sentences
-    5. Detecting whether a matched keyword is wanted/rejected
-    6. Validating a sentence
+    This class does NOT interpret the user's request.
+
+    Groq/MoodAgent remains responsible for understanding
+    the user's language.
+
+    MoodKeywords is only responsible for:
+        - storing supported mood categories
+        - storing useful keyword/synonym vocabulary
+        - finding keyword matches in text
+        - validating AI-generated moods
+        - normalizing mood names
     """
 
     def __init__(self):
@@ -38,28 +41,28 @@ class MoodKeywords:
                 "countryside",
                 "rural",
                 "greenery",
-                "forests",
                 "forest",
+                "forests",
                 "woods",
                 "woodlands",
-                "valleys",
                 "valley",
-                "lakes",
+                "valleys",
                 "lake",
-                "rivers",
+                "lakes",
                 "river",
-                "waterfalls",
+                "rivers",
                 "waterfall",
-                "canyons",
+                "waterfalls",
                 "canyon",
-                "cliffs",
+                "canyons",
                 "cliff",
-                "national parks",
+                "cliffs",
                 "national park",
+                "national parks",
                 "nature reserve",
                 "nature reserves",
-                "untouched nature",
                 "pristine nature",
+                "untouched nature",
             ],
 
             # ==================================================
@@ -217,8 +220,8 @@ class MoodKeywords:
                 "local dishes",
                 "traditional food",
                 "fine dining",
-                "cafes",
                 "cafe",
+                "cafes",
                 "bakery",
                 "bakeries",
             ],
@@ -231,16 +234,16 @@ class MoodKeywords:
                 "night life",
                 "party",
                 "partying",
-                "clubs",
                 "club",
+                "clubs",
                 "nightclub",
                 "nightclubs",
                 "night club",
                 "night clubs",
-                "bars",
                 "bar",
-                "pubs",
+                "bars",
                 "pub",
+                "pubs",
                 "drinking",
                 "late night",
                 "late-night",
@@ -528,8 +531,8 @@ class MoodKeywords:
                 "local markets",
                 "souvenirs",
                 "souvenir shopping",
-                "boutiques",
                 "boutique",
+                "boutiques",
                 "designer stores",
                 "designer shopping",
                 "fashion",
@@ -715,13 +718,10 @@ class MoodKeywords:
                 "urban life",
                 "urban environment",
                 "urban setting",
-
                 "modern",
                 "modern city",
                 "modern cities",
-                "modern architecture",
                 "modern lifestyle",
-
                 "city",
                 "cities",
                 "big city",
@@ -737,13 +737,11 @@ class MoodKeywords:
                 "city break",
                 "city trip",
                 "city vacation",
-
                 "metropolitan",
                 "metropolitan area",
                 "metropolitan city",
                 "metropolis",
                 "cosmopolitan",
-
                 "contemporary city",
                 "contemporary cities",
             ],
@@ -834,7 +832,6 @@ class MoodKeywords:
                 "hot temperatures",
                 "sunny",
                 "sunny weather",
-                "sunny climate",
                 "sunshine",
                 "tropical",
                 "tropical weather",
@@ -868,6 +865,7 @@ class MoodKeywords:
             ],
         }
 
+        # Common expressions indicating rejection.
         self.negation_phrases = [
             "do not want",
             "don't want",
@@ -875,32 +873,25 @@ class MoodKeywords:
             "doesn't want",
             "did not want",
             "didn't want",
-
             "do not like",
             "don't like",
             "does not like",
             "doesn't like",
             "did not like",
             "didn't like",
-
             "not interested in",
             "not interested",
             "not looking for",
             "not looking to",
-
             "no interest in",
             "not a fan of",
-
             "avoid",
             "avoiding",
             "without",
             "exclude",
             "excluding",
-            "excluded",
-
             "stay away from",
             "stay away",
-
             "hate",
             "hates",
             "dislike",
@@ -911,32 +902,30 @@ class MoodKeywords:
     # NORMALIZATION
     # ==========================================================
 
-    def normalize(self, text: str) -> str:
+    def normalize(self, text):
         """
-        Converts text into a consistent searchable format.
+        Normalize text for searching and comparison.
         """
 
-        text = text.lower().strip()
+        text = str(text).lower().strip()
 
-        # Treat hyphens as spaces.
         text = text.replace("-", " ")
 
-        # Remove repeated whitespace.
         text = re.sub(
             r"\s+",
             " ",
-            text,
+            text
         )
 
         return text
 
     # ==========================================================
-    # GET ALL MOOD CATEGORIES
+    # MOOD CATEGORIES
     # ==========================================================
 
     def get_moods(self):
         """
-        Returns every canonical mood category.
+        Return all supported canonical mood categories.
         """
 
         return list(
@@ -944,12 +933,12 @@ class MoodKeywords:
         )
 
     # ==========================================================
-    # GET KEYWORDS FOR ONE MOOD
+    # KEYWORDS FOR MOOD
     # ==========================================================
 
-    def get_keywords(self, mood: str):
+    def get_keywords(self, mood):
         """
-        Returns every keyword belonging to a mood.
+        Return keywords belonging to a specific mood.
         """
 
         mood = self.normalize(mood)
@@ -960,45 +949,63 @@ class MoodKeywords:
         )
 
     # ==========================================================
-    # TRANSVERSE ENTIRE KEYWORD LIBRARY
+    # VALIDATE AI MOOD
     # ==========================================================
 
-    def traverse_keywords(self):
+    def is_valid_mood(self, mood):
         """
-        Generator that goes through every mood and every keyword.
-
-        Example:
-
-            for mood, keyword in finder.traverse_keywords():
-                print(mood, keyword)
+        Check whether an AI-generated mood is supported
+        by the application's mood vocabulary.
         """
 
-        for mood, keywords in self.mood_keywords.items():
+        mood = self.normalize(mood)
 
-            for keyword in keywords:
-
-                yield mood, keyword
+        return mood in self.mood_keywords
 
     # ==========================================================
-    # SEARCH KEYWORD IN SENTENCE
+    # VALIDATE MOOD LIST
     # ==========================================================
 
-    def search_keyword(
-        self,
-        sentence: str,
-        keyword: str,
-    ) -> bool:
+    def validate_mood_list(self, moods):
         """
-        Returns True if the keyword exists in the sentence.
+        Clean a list of moods returned by the AI.
+
+        Invalid moods are removed.
+        Duplicate moods are removed.
+        """
+
+        if not isinstance(moods, list):
+            return []
+
+        valid = []
+
+        for mood in moods:
+
+            mood = self.normalize(mood)
+
+            if (
+                self.is_valid_mood(mood)
+                and mood not in valid
+            ):
+                valid.append(mood)
+
+        return valid
+
+    # ==========================================================
+    # SEARCH KEYWORD
+    # ==========================================================
+
+    def search_keyword(self, text, keyword):
+        """
+        Check whether a keyword appears in text.
 
         Handles:
-        - capitalization
-        - hyphen/space differences
-        - whole-word matching
-        - basic plural forms
+            - capitalization
+            - hyphen differences
+            - whole-word matching
         """
 
-        sentence = self.normalize(sentence)
+        text = self.normalize(text)
         keyword = self.normalize(keyword)
 
         pattern = (
@@ -1007,337 +1014,218 @@ class MoodKeywords:
             rf"(?!\w)"
         )
 
-        if re.search(
-            pattern,
-            sentence,
-        ):
-            return True
-
-        # Basic plural support.
-        if keyword.endswith("y"):
-
-            plural = (
-                keyword[:-1]
-                + "ies"
-            )
-
-        else:
-
-            plural = (
-                keyword
-                + "s"
-            )
-
-        plural_pattern = (
-            rf"(?<!\w)"
-            rf"{re.escape(plural)}"
-            rf"(?!\w)"
-        )
-
         return bool(
             re.search(
-                plural_pattern,
-                sentence,
+                pattern,
+                text
             )
         )
 
     # ==========================================================
-    # FIND MOOD FROM SENTENCE
+    # FIND MOODS IN USER INPUT
     # ==========================================================
 
-    def find_mood(
-        self,
-        sentence: str,
-    ):
+    def find_moods(self, text):
         """
-        Searches the sentence against the entire mood library.
+        Find mood categories that have explicit keyword
+        matches inside the user's input.
 
-        Returns a list of canonical mood categories that were
-        found.
+        IMPORTANT:
+        This is only a helper.
 
-        Example:
-
-            "I want a peaceful modern city."
-
-        returns:
-
-            ["urban", "quiet"]
+        MoodAgent/Groq remains the primary interpreter.
         """
 
-        found_moods = []
+        found = []
 
-        for mood, keywords in (
-            self.mood_keywords.items()
-        ):
+        for mood, keywords in self.mood_keywords.items():
 
             for keyword in keywords:
 
                 if self.search_keyword(
-                    sentence,
-                    keyword,
+                    text,
+                    keyword
                 ):
 
-                    if mood not in found_moods:
-
-                        found_moods.append(
-                            mood
-                        )
+                    if mood not in found:
+                        found.append(mood)
 
                     break
 
-        return found_moods
+        return found
 
     # ==========================================================
-    # FIND THE ACTUAL KEYWORDS
+    # FIND ACTUAL KEYWORDS
     # ==========================================================
 
-    def find_keywords(
-        self,
-        sentence: str,
-    ):
+    def find_keywords(self, text):
         """
-        Returns the actual keywords found rather than just
-        the canonical mood category.
+        Return the actual vocabulary matches.
 
         Example:
 
-            "I want a peaceful modern city."
-
-        might return:
-
-            {
-                "urban": ["modern", "city"],
-                "quiet": ["peaceful"]
-            }
+        {
+            "mountains": ["mountain"],
+            "hiking": ["hiking"],
+            "quiet": ["peaceful"]
+        }
         """
 
         found = {}
 
-        for mood, keywords in (
-            self.mood_keywords.items()
-        ):
+        for mood, keywords in self.mood_keywords.items():
 
             matches = []
 
             for keyword in keywords:
 
                 if self.search_keyword(
-                    sentence,
-                    keyword,
+                    text,
+                    keyword
                 ):
 
-                    matches.append(
-                        keyword
-                    )
+                    matches.append(keyword)
 
             if matches:
-
                 found[mood] = matches
 
         return found
 
     # ==========================================================
-    # CHECK WHETHER KEYWORD IS NEGATED
+    # NEGATION DETECTION
     # ==========================================================
 
-    def is_negated(
-        self,
-        sentence: str,
-        keyword: str,
-    ) -> bool:
+    def is_negated(self, text, keyword):
         """
-        Returns:
+        Detect whether a keyword appears to be rejected.
 
-            True  -> keyword is being rejected
-            False -> keyword is being requested
+        This is a basic helper only.
 
-        Example:
-
-            "I want mountains."
-
-                -> False
-
-            "I don't want mountains."
-
-                -> True
+        The AI remains responsible for understanding
+        complicated language and context.
         """
 
-        sentence = self.normalize(sentence)
+        text = self.normalize(text)
         keyword = self.normalize(keyword)
 
-        position = sentence.find(
-            keyword
-        )
+        position = text.find(keyword)
 
         if position == -1:
-
             return False
 
-        before_keyword = (
-            sentence[:position]
-        )
+        before = text[:position]
 
-        # Check explicit negative phrases.
         for phrase in self.negation_phrases:
 
-            if phrase in before_keyword:
-
+            if phrase in before:
                 return True
 
-        # Short-range negation.
-        words = before_keyword.split()
-
-        recent_words = words[-5:]
+        recent_words = before.split()[-5:]
 
         if any(
-            word in {
-                "not",
-                "no",
-                "never",
-            }
+            word in {"not", "no", "never"}
             for word in recent_words
         ):
-
             return True
 
         return False
 
     # ==========================================================
-    # VALIDATE ONE KEYWORD
+    # ANALYZE EXPLICIT KEYWORDS
     # ==========================================================
 
-    def validate_keyword(
-        self,
-        sentence: str,
-        mood: str,
-        keyword: str,
-    ) -> bool:
+    def analyze(self, text):
         """
-        Validates whether a particular keyword is positively
-        expressed in the sentence.
-
-        Returns:
-
-            True  -> wanted
-            False -> rejected OR not found
-        """
-
-        if not self.search_keyword(
-            sentence,
-            keyword,
-        ):
-
-            return False
-
-        if self.is_negated(
-            sentence,
-            keyword,
-        ):
-
-            return False
-
-        return True
-
-    # ==========================================================
-    # VALIDATE SENTENCE
-    # ==========================================================
-
-    def validate_sentence(
-        self,
-        sentence: str,
-    ) -> bool:
-        """
-        Returns True if the sentence contains at least one
-        recognized POSITIVE travel preference.
-
-        Returns False if:
-        - no known mood keyword exists
-        - all recognized keywords are negated
-        """
-
-        found_keywords = (
-            self.find_keywords(sentence)
-        )
-
-        if not found_keywords:
-
-            return False
-
-        for mood, keywords in (
-            found_keywords.items()
-        ):
-
-            for keyword in keywords:
-
-                if self.validate_keyword(
-                    sentence,
-                    mood,
-                    keyword,
-                ):
-
-                    return True
-
-        return False
-
-    # ==========================================================
-    # FULL SENTENCE ANALYSIS
-    # ==========================================================
-
-    def analyze_sentence(
-        self,
-        sentence: str,
-    ):
-        """
-        Performs complete analysis of one sentence.
+        Analyze explicit vocabulary found in user input.
 
         Returns:
 
         {
-            "valid": True,
-            "positive": {
-                "urban": ["modern", "city"],
-                "quiet": ["peaceful"]
-            },
-            "negative": {
-                "crowded": ["busy"]
-            }
+            "wanted": [...],
+            "avoid": [...],
+            "keywords": {...}
         }
+
+        This does NOT replace Groq.
         """
 
-        found = self.find_keywords(
-            sentence
-        )
+        found = self.find_keywords(text)
 
-        positive = {}
-        negative = {}
+        wanted = []
+        avoid = []
 
         for mood, keywords in found.items():
 
             for keyword in keywords:
 
                 if self.is_negated(
-                    sentence,
-                    keyword,
+                    text,
+                    keyword
                 ):
 
-                    negative.setdefault(
-                        mood,
-                        []
-                    ).append(keyword)
+                    if mood not in avoid:
+                        avoid.append(mood)
 
                 else:
 
-                    positive.setdefault(
-                        mood,
-                        []
-                    ).append(keyword)
+                    if mood not in wanted:
+                        wanted.append(mood)
 
         return {
-            "valid": bool(
-                positive
-            ),
+            "wanted": wanted,
+            "avoid": avoid,
+            "keywords": found
+        }
 
-            "positive": positive,
+    # ==========================================================
+    # VALIDATE GROQ PROFILE
+    # ==========================================================
 
-            "negative": negative,
+    def validate_profile(self, profile):
+        """
+        Validate the mood portions of a profile returned
+        by Groq.
+
+        The AI still determines the meaning.
+
+        This helper only makes sure the returned mood names
+        exist in the application's vocabulary.
+        """
+
+        if not isinstance(profile, dict):
+            return {
+                "wanted": [],
+                "avoid": [],
+                "summary": ""
+            }
+
+        wanted = self.validate_mood_list(
+            profile.get(
+                "wanted",
+                []
+            )
+        )
+
+        avoid = self.validate_mood_list(
+            profile.get(
+                "avoid",
+                []
+            )
+        )
+
+        # If a mood is both wanted and rejected,
+        # rejection takes priority.
+        wanted = [
+            mood
+            for mood in wanted
+            if mood not in avoid
+        ]
+
+        return {
+            "wanted": wanted,
+            "avoid": avoid,
+            "summary": profile.get(
+                "summary",
+                ""
+            )
         }

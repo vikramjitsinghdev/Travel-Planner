@@ -1,596 +1,382 @@
-# mood_score.py
-
-import math
-
-
 class MoodScore:
     """
-    Calculates the percentage distribution of travel moods.
+    Calculates numerical preference scores from the
+    moods returned by MoodAgent.
 
-    Every mood has one of three states:
+    This class does NOT interpret user language.
 
-        SELECTED
-            Gets:
-                P_base + A * e^(-lambda * (r - 1))
+    Its responsibilities are:
+        - assign default importance to moods
+        - distinguish wanted and rejected moods
+        - produce weighted mood preferences
+        - calculate destination compatibility later
 
-        UNSELECTED
-            Gets:
-                P_base
+    Score range:
 
-        REJECTED
-            Gets:
-                0
-
-    After calculating the raw scores, all NON-REJECTED moods
-    are normalized so that their percentages add up to 100%.
+        +1.0  = strongly wanted
+         0.0  = neutral
+        -1.0  = strongly avoided
     """
 
-    def __init__(
-        self,
-        moods,
-        base_percentage=1.0,
-        amplitude=10.0,
-        decay=0.5,
-    ):
-        """
-        Parameters
-        ----------
-        moods:
-            List of every available mood category.
+    def __init__(self):
 
-        base_percentage:
-            Base raw score given to every non-rejected mood.
-
-        amplitude:
-            Additional score given to the highest-ranked
-            selected mood.
-
-        decay:
-            Controls how quickly the additional selected
-            score decreases with rank.
-        """
-
-        self.moods = list(moods)
-
-        self.base_percentage = base_percentage
-        self.amplitude = amplitude
-        self.decay = decay
-
-    # ==========================================================
-    # PARAMETERS
-    # ==========================================================
-
-    def set_parameters(
-        self,
-        base_percentage=None,
-        amplitude=None,
-        decay=None,
-    ):
-        """
-        Updates the scoring parameters.
-        """
-
-        if base_percentage is not None:
-            self.base_percentage = base_percentage
-
-        if amplitude is not None:
-            self.amplitude = amplitude
-
-        if decay is not None:
-            self.decay = decay
-
-    # ==========================================================
-    # SELECTED MOOD FORMULA
-    # ==========================================================
-
-    def selected_raw_score(
-        self,
-        rank,
-    ):
-        """
-        Calculates the raw score of a selected mood.
-
-        Formula:
-
-            P_base + A * e^(-lambda * (r - 1))
-        """
-
-        return (
-            self.base_percentage
-            +
-            self.amplitude
-            * math.exp(
-                -self.decay
-                * (rank - 1)
-            )
-        )
-
-    # ==========================================================
-    # CLOSED-FORM SELECTED BONUS
-    # ==========================================================
-
-    def selected_bonus_sum(
-        self,
-        number_selected,
-    ):
-        """
-        Calculates the total exponential bonus of all
-        selected moods using the geometric-series formula.
-
-        Formula:
-
-            A * (1 - e^(-lambda*n))
-              --------------------
-                1 - e^(-lambda)
-
-        This avoids manually summing every selected mood.
-        """
-
-        if number_selected <= 0:
-            return 0.0
-
-        # Special case where lambda = 0.
+        # --------------------------------------------------
+        # Default importance of each supported mood.
         #
-        # e^0 = 1, so the normal formula would divide by zero.
-        #
-        # In that case every selected mood receives A.
-        if self.decay == 0:
+        # These values can later be changed based on
+        # testing and user feedback.
+        # --------------------------------------------------
 
-            return (
-                self.amplitude
-                * number_selected
-            )
+        self.mood_weights = {
 
-        ratio = math.exp(
-            -self.decay
-        )
+            # Nature / environment
+            "nature": 1.0,
+            "mountains": 1.0,
+            "beaches": 1.0,
+            "wildlife": 0.9,
+            "remote": 0.9,
 
-        return (
-            self.amplitude
-            *
-            (
-                1 - ratio ** number_selected
-            )
-            /
-            (
-                1 - ratio
-            )
-        )
+            # Activities
+            "hiking": 0.9,
+            "water_sports": 0.8,
+            "adventure": 0.8,
+            "road_trips": 0.7,
+            "photography": 0.7,
 
-    # ==========================================================
-    # TOTAL RAW SCORE
-    # ==========================================================
+            # Experience
+            "relaxation": 0.8,
+            "quiet": 0.9,
+            "comfort": 0.7,
+            "culture": 0.8,
+            "history": 0.7,
+            "food": 0.7,
+            "architecture": 0.6,
+            "museums": 0.6,
+            "spirituality": 0.6,
 
-    def calculate_total_raw_score(
-        self,
-        number_active,
-        number_selected,
-    ):
+            # Social / trip type
+            "nightlife": 0.8,
+            "shopping": 0.5,
+            "luxury": 0.6,
+            "romance": 0.8,
+            "family": 0.9,
+            "solo": 0.8,
+
+            # Environment
+            "snow": 0.8,
+            "warm_weather": 0.8,
+            "cold_weather": 0.8,
+
+            # Urban / crowd
+            "urban": 0.8,
+            "crowded": 1.0,
+        }
+
+    # ==================================================
+    # GET BASE WEIGHT
+    # ==================================================
+
+    def get_weight(self, mood):
         """
-        Calculates the total raw score S.
+        Return the default importance of a mood.
 
-        IMPORTANT:
-
-        Only NON-REJECTED categories participate.
-
-        Therefore:
-
-            S =
-                m * P_base
-                +
-                A * geometric_sum
-
-        where:
-
-            m = number of non-rejected categories
-            n = number of selected categories
-        """
-
-        if number_active <= 0:
-            return 0.0
-
-        if number_selected < 0:
-            number_selected = 0
-
-        if number_selected > number_active:
-            number_selected = number_active
-
-        base_total = (
-            number_active
-            * self.base_percentage
-        )
-
-        bonus_total = (
-            self.selected_bonus_sum(
-                number_selected
-            )
-        )
-
-        return (
-            base_total
-            +
-            bonus_total
-        )
-
-    # ==========================================================
-    # CLEAN MOOD LIST
-    # ==========================================================
-
-    def _clean_moods(
-        self,
-        moods,
-    ):
-        """
-        Removes invalid/duplicate moods while preserving
-        their original order.
+        Unknown moods receive a neutral default value.
         """
 
-        cleaned = []
+        mood = str(mood).strip().lower()
+
+        return self.mood_weights.get(
+            mood,
+            0.5
+        )
+
+    # ==================================================
+    # SCORE WANTED MOODS
+    # ==================================================
+
+    def score_wanted(self, moods):
+        """
+        Give positive scores to wanted moods.
+
+        Example:
+
+            ["nature", "mountains", "hiking"]
+
+        becomes:
+
+            {
+                "nature": 1.0,
+                "mountains": 1.0,
+                "hiking": 0.9
+            }
+        """
+
+        scores = {}
+
+        if not isinstance(moods, list):
+            return scores
 
         for mood in moods:
 
-            if not mood:
-                continue
+            mood = str(
+                mood
+            ).strip().lower()
 
-            if mood not in self.moods:
-                continue
+            if mood in self.mood_weights:
 
-            if mood not in cleaned:
-
-                cleaned.append(
+                scores[mood] = self.get_weight(
                     mood
                 )
 
-        return cleaned
+        return scores
 
-    # ==========================================================
-    # CALCULATE RAW POINTS
-    # ==========================================================
+    # ==================================================
+    # SCORE REJECTED MOODS
+    # ==================================================
 
-    def calculate_raw_points(
-        self,
-        selected_moods,
-        rejected_moods=None,
-    ):
+    def score_avoided(self, moods):
         """
-        Creates the raw point distribution BEFORE normalization.
+        Give negative scores to rejected moods.
 
-        States:
+        Example:
 
-            selected   -> base + exponential bonus
-            unselected -> base
-            rejected   -> 0
-        """
+            ["crowded", "urban"]
 
-        if rejected_moods is None:
-            rejected_moods = []
+        becomes:
 
-        selected_moods = self._clean_moods(
-            selected_moods
-        )
-
-        rejected_moods = self._clean_moods(
-            rejected_moods
-        )
-
-        # ------------------------------------------------------
-        # Rejection always has priority.
-        # ------------------------------------------------------
-
-        selected_moods = [
-            mood
-            for mood in selected_moods
-            if mood not in rejected_moods
-        ]
-
-        # ------------------------------------------------------
-        # Number of categories that actually participate.
-        # ------------------------------------------------------
-
-        active_moods = [
-            mood
-            for mood in self.moods
-            if mood not in rejected_moods
-        ]
-
-        raw_points = {}
-
-        # ------------------------------------------------------
-        # Calculate each category.
-        # ------------------------------------------------------
-
-        for mood in self.moods:
-
-            # ----------------------------------------------
-            # REJECTED
-            # ----------------------------------------------
-
-            if mood in rejected_moods:
-
-                raw_points[mood] = 0.0
-
-            # ----------------------------------------------
-            # SELECTED
-            # ----------------------------------------------
-
-            elif mood in selected_moods:
-
-                rank = (
-                    selected_moods.index(mood)
-                    + 1
-                )
-
-                raw_points[mood] = (
-                    self.selected_raw_score(
-                        rank
-                    )
-                )
-
-            # ----------------------------------------------
-            # UNSELECTED
-            # ----------------------------------------------
-
-            else:
-
-                raw_points[mood] = (
-                    self.base_percentage
-                )
-
-        return raw_points
-
-    # ==========================================================
-    # NORMALIZE
-    # ==========================================================
-
-    def normalize_scores(
-        self,
-        raw_points,
-        rejected_moods=None,
-    ):
-        """
-        Converts raw points into percentages.
-
-        Rejected categories remain exactly 0%.
-
-        Every other category participates in the denominator.
-
-        Therefore:
-
-            sum(all percentages) = 100%
+            {
+                "crowded": -1.0,
+                "urban": -0.8
+            }
         """
 
-        if rejected_moods is None:
-            rejected_moods = []
+        scores = {}
 
-        rejected_moods = self._clean_moods(
-            rejected_moods
-        )
+        if not isinstance(moods, list):
+            return scores
 
-        # ------------------------------------------------------
-        # IMPORTANT:
-        #
-        # DO NOT include rejected categories in the denominator.
-        # ------------------------------------------------------
+        for mood in moods:
 
-        total = sum(
-            score
-            for mood, score in raw_points.items()
-            if mood not in rejected_moods
-        )
-
-        # ------------------------------------------------------
-        # Safety check.
-        # ------------------------------------------------------
-
-        if total <= 0:
-
-            active_moods = [
+            mood = str(
                 mood
-                for mood in self.moods
-                if mood not in rejected_moods
-            ]
+            ).strip().lower()
 
-            if not active_moods:
+            if mood in self.mood_weights:
 
-                return {
-                    mood: 0.0
-                    for mood in self.moods
-                }
-
-            equal_percentage = (
-                100.0
-                / len(active_moods)
-            )
-
-            return {
-                mood: (
-                    0.0
-                    if mood in rejected_moods
-                    else equal_percentage
+                scores[mood] = -self.get_weight(
+                    mood
                 )
-                for mood in self.moods
+
+        return scores
+
+    # ==================================================
+    # CREATE COMPLETE SCORE PROFILE
+    # ==================================================
+
+    def score_profile(self, profile):
+        """
+        Convert a MoodAgent profile into a complete
+        numerical mood profile.
+
+        Input:
+
+            {
+                "wanted": [
+                    "nature",
+                    "mountains"
+                ],
+                "avoid": [
+                    "crowded",
+                    "urban"
+                ]
             }
 
-        # ------------------------------------------------------
-        # Normalize.
-        # ------------------------------------------------------
+        Output:
 
-        percentages = {}
+            {
+                "nature": 1.0,
+                "mountains": 1.0,
+                "crowded": -1.0,
+                "urban": -0.8
+            }
+        """
 
-        for mood, raw_score in (
-            raw_points.items()
+        if not isinstance(profile, dict):
+            return {}
+
+        wanted = profile.get(
+            "wanted",
+            []
+        )
+
+        avoid = profile.get(
+            "avoid",
+            []
+        )
+
+        scores = {}
+
+        # Positive preferences.
+        scores.update(
+            self.score_wanted(
+                wanted
+            )
+        )
+
+        # Negative preferences.
+        avoided_scores = self.score_avoided(
+            avoid
+        )
+
+        scores.update(
+            avoided_scores
+        )
+
+        return scores
+
+    # ==================================================
+    # CREATE DETAILED SCORE PROFILE
+    # ==================================================
+
+    def analyze_profile(self, profile):
+        """
+        Return a detailed scoring structure.
+
+        This is useful for debugging and for showing
+        the reasoning behind the eventual destination
+        ranking system.
+        """
+
+        if not isinstance(profile, dict):
+            profile = {}
+
+        wanted = profile.get(
+            "wanted",
+            []
+        )
+
+        avoid = profile.get(
+            "avoid",
+            []
+        )
+
+        wanted_scores = self.score_wanted(
+            wanted
+        )
+
+        avoided_scores = self.score_avoided(
+            avoid
+        )
+
+        total_positive = sum(
+            wanted_scores.values()
+        )
+
+        total_negative = sum(
+            avoided_scores.values()
+        )
+
+        return {
+            "wanted": wanted_scores,
+
+            "avoid": avoided_scores,
+
+            "combined": {
+                **wanted_scores,
+                **avoided_scores
+            },
+
+            "total_positive": round(
+                total_positive,
+                3
+            ),
+
+            "total_negative": round(
+                total_negative,
+                3
+            )
+        }
+
+    # ==================================================
+    # DESTINATION COMPATIBILITY
+    # ==================================================
+
+    def calculate_destination_score(
+        self,
+        user_scores,
+        destination_moods
+    ):
+        """
+        Calculate how well a destination matches
+        the user's mood preferences.
+
+        user_scores:
+
+            {
+                "nature": 1.0,
+                "mountains": 1.0,
+                "crowded": -1.0
+            }
+
+        destination_moods:
+
+            {
+                "nature": 0.9,
+                "mountains": 1.0,
+                "crowded": 0.2
+            }
+
+        The destination's mood values should ideally
+        be normalized between 0.0 and 1.0.
+
+        A positive user preference rewards matching
+        destination characteristics.
+
+        A negative user preference penalizes them.
+        """
+
+        if not isinstance(
+            user_scores,
+            dict
         ):
+            return 0.0
 
-            if mood in rejected_moods:
-
-                percentages[mood] = 0.0
-
-            else:
-
-                percentages[mood] = (
-                    raw_score
-                    / total
-                ) * 100.0
-
-        # ------------------------------------------------------
-        # Correct floating-point rounding.
-        # ------------------------------------------------------
-
-        difference = (
-            100.0
-            - sum(percentages.values())
-        )
-
-        active_moods = [
-            mood
-            for mood in self.moods
-            if mood not in rejected_moods
-        ]
-
-        if active_moods:
-
-            # Add the tiny rounding correction to the largest
-            # active category.
-            largest_mood = max(
-                active_moods,
-                key=lambda mood:
-                    percentages[mood]
-            )
-
-            percentages[largest_mood] += (
-                difference
-            )
-
-        return percentages
-
-    # ==========================================================
-    # MAIN SCORING METHOD
-    # ==========================================================
-
-    def calculate_scores(
-        self,
-        selected_moods,
-        rejected_moods=None,
-    ):
-        """
-        Complete scoring pipeline:
-
-            selected/rejected moods
-                    ↓
-                raw points
-                    ↓
-                normalization
-                    ↓
-                percentages totaling 100%
-        """
-
-        if rejected_moods is None:
-            rejected_moods = []
-
-        selected_moods = self._clean_moods(
-            selected_moods
-        )
-
-        rejected_moods = self._clean_moods(
-            rejected_moods
-        )
-
-        # ------------------------------------------------------
-        # Calculate raw scores.
-        # ------------------------------------------------------
-
-        raw_points = (
-            self.calculate_raw_points(
-                selected_moods,
-                rejected_moods,
-            )
-        )
-
-        # ------------------------------------------------------
-        # Normalize.
-        # ------------------------------------------------------
-
-        percentages = (
-            self.normalize_scores(
-                raw_points,
-                rejected_moods,
-            )
-        )
-
-        return percentages
-
-    # ==========================================================
-    # GET RANKING
-    # ==========================================================
-
-    def get_ranking(
-        self,
-        percentages,
-    ):
-        """
-        Returns moods from highest to lowest percentage.
-        """
-
-        return sorted(
-            percentages.items(),
-            key=lambda item:
-                item[1],
-            reverse=True,
-        )
-
-    # ==========================================================
-    # TOP MOODS
-    # ==========================================================
-
-    def get_top_moods(
-        self,
-        percentages,
-        amount=5,
-    ):
-        """
-        Returns the highest scoring moods.
-        """
-
-        return self.get_ranking(
-            percentages
-        )[:amount]
-
-    # ==========================================================
-    # DISPLAY
-    # ==========================================================
-
-    def display_scores(
-        self,
-        percentages,
-    ):
-        """
-        Displays the final mood distribution.
-        """
-
-        print(
-            "\nMOOD DISTRIBUTION"
-        )
-
-        print(
-            "-" * 40
-        )
-
-        for mood, percentage in (
-            self.get_ranking(
-                percentages
-            )
+        if not isinstance(
+            destination_moods,
+            dict
         ):
+            return 0.0
 
-            print(
-                f"{mood:<22}"
-                f"{percentage:>7.2f}%"
+        score = 0.0
+
+        for mood, user_score in user_scores.items():
+
+            destination_value = destination_moods.get(
+                mood,
+                0.0
             )
 
-        print(
-            "-" * 40
-        )
+            try:
+                user_score = float(
+                    user_score
+                )
 
-        print(
-            f"{'TOTAL':<22}"
-            f"{sum(percentages.values()):>7.2f}%"
+                destination_value = float(
+                    destination_value
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+                continue
+
+            score += (
+                user_score
+                * destination_value
+            )
+
+        return round(
+            score,
+            3
         )
