@@ -2,6 +2,7 @@ import json
 
 from ai.mood_agent import MoodAgent
 from ai.travel_agent import TravelAgent
+from ai.research_agent import ResearchAgent
 from travel.budget import Budget
 
 
@@ -17,7 +18,9 @@ def main():
     """
     Main controller for the AI Travel Planner.
 
-    Current architecture:
+    ============================================================
+    ARCHITECTURE
+    ============================================================
 
         User
           ↓
@@ -25,27 +28,55 @@ def main():
           │
           ├── MoodAgent
           │      ↓
-          │   Groq
+          │    Groq
           │      ↓
-          │   Preferences + Mood Scores
+          │   Preferences
           │
           ├── Budget
           │      ↓
           │   Budget State
           │
-          └── TravelAgent
-                 ↓
-              Gemini
-                 ↓
-          Travel Recommendation
+          ↓
+        TravelAgent
+          ↓
+        Gemini
+          ↓
+      Candidate Destinations
+          ↓
+        main.py
+          ↓
+      ResearchAgent
+          ↓
+        Ollama
+          ↓
+      Research Information
+          ↓
+        main.py
+          ↓
+      TravelAgent
+          ↓
+        Gemini
+          ↓
+      Final Recommendation
+
+    ============================================================
+
+    IMPORTANT:
 
     main.py is the communication layer.
 
-    MoodAgent and TravelAgent do NOT communicate
-    directly with each other.
+    None of the AI agents communicate directly with each other.
 
-    Budget also does NOT communicate directly with
-    TravelAgent.
+        MoodAgent      ─┐
+                        │
+        Budget         ─┼──→ main.py
+                        │
+        TravelAgent    ─┤
+                        │
+        ResearchAgent  ─┘
+
+    main.py decides what information is passed from one
+    system to another.
     """
 
     print("=" * 60)
@@ -61,7 +92,11 @@ def main():
     ).strip()
 
     if not user_input:
-        print("\nPlease enter a travel request.")
+
+        print(
+            "\nPlease enter a travel request."
+        )
+
         return
 
     # ==========================================================
@@ -81,9 +116,11 @@ def main():
             )
 
             if total_budget < 0:
+
                 print(
                     "Budget cannot be negative."
                 )
+
                 continue
 
             break
@@ -95,7 +132,7 @@ def main():
             )
 
     # ==========================================================
-    # 3. CREATE BUDGET OBJECT
+    # 3. CREATE BUDGET
     # ==========================================================
 
     budget = Budget(
@@ -104,17 +141,25 @@ def main():
     )
 
     # ==========================================================
-    # 4. CREATE MOOD AGENT
+    # 4. CREATE AI AGENTS
     # ==========================================================
 
     mood_agent = MoodAgent()
+
+    travel_agent = TravelAgent()
+
+    research_agent = ResearchAgent()
+
+    # ==========================================================
+    # 5. ANALYZE USER TRAVEL PREFERENCES
+    # ==========================================================
 
     print_section(
         "ANALYZING TRAVEL PREFERENCES"
     )
 
     # ----------------------------------------------------------
-    # main.py sends the user input to MoodAgent.
+    # main.py → MoodAgent
     # ----------------------------------------------------------
 
     mood_preferences = mood_agent.interpret(
@@ -122,10 +167,12 @@ def main():
     )
 
     # ==========================================================
-    # 5. DISPLAY MOOD INFORMATION
+    # 6. DISPLAY MOOD ANALYSIS
     # ==========================================================
 
-    print("\n--- Mood Analysis ---")
+    print(
+        "\n--- Mood Analysis ---"
+    )
 
     print(
         json.dumps(
@@ -135,39 +182,50 @@ def main():
     )
 
     # ==========================================================
-    # 6. DISPLAY INITIAL BUDGET
+    # 7. GET CURRENT BUDGET
     # ==========================================================
 
-    print("\n--- Initial Budget ---")
+    budget_state = budget.get_status()
+
+    print(
+        "\n--- Initial Budget ---"
+    )
 
     print(
         json.dumps(
-            budget.get_status(),
+            budget_state,
             indent=4
         )
     )
 
     # ==========================================================
-    # 7. CREATE TRAVEL AGENT
+    # 8. GEMINI — FIND CANDIDATE DESTINATIONS
     # ==========================================================
-
-    travel_agent = TravelAgent()
-
-    # ==========================================================
-    # 8. GET CURRENT BUDGET STATE
-    # ==========================================================
-
-    budget_state = budget.get_status()
-
-    # ==========================================================
-    # 9. SEND EVERYTHING TO GEMINI
+    #
+    # main.py sends:
+    #
+    #     user input
+    #     mood preferences
+    #     budget
+    #
+    # to TravelAgent.
+    #
+    # TravelAgent sends this to Gemini.
+    #
+    # Gemini returns:
+    #
+    #     candidate destinations
+    #
+    # TravelAgent does NOT send anything directly
+    # to ResearchAgent.
+    #
     # ==========================================================
 
     print_section(
-        "GENERATING TRAVEL RECOMMENDATION"
+        "SELECTING CANDIDATE DESTINATIONS"
     )
 
-    travel_response = travel_agent.ask(
+    candidate_result = travel_agent.find_candidates(
         user_input=user_input,
 
         preferences=mood_preferences,
@@ -176,7 +234,190 @@ def main():
     )
 
     # ==========================================================
-    # 10. DISPLAY GEMINI RESPONSE
+    # 9. DISPLAY CANDIDATES
+    # ==========================================================
+
+    print(
+        "\n--- Gemini Candidate Destinations ---"
+    )
+
+    print(
+        json.dumps(
+            candidate_result,
+            indent=4
+        )
+    )
+
+    # ==========================================================
+    # 10. EXTRACT DESTINATION NAMES
+    # ==========================================================
+
+    candidates = []
+
+    for candidate in candidate_result.get(
+        "candidates",
+        []
+    ):
+
+        if isinstance(
+            candidate,
+            dict
+        ):
+
+            name = candidate.get(
+                "name"
+            )
+
+            if name:
+
+                candidates.append(
+                    name
+                )
+
+        elif isinstance(
+            candidate,
+            str
+        ):
+
+            candidates.append(
+                candidate
+            )
+
+    # ==========================================================
+    # 11. VALIDATE CANDIDATES
+    # ==========================================================
+
+    if not candidates:
+
+        print(
+            "\nGemini did not return any candidate destinations."
+        )
+
+        print(
+            "\nThe travel planning process cannot continue."
+        )
+
+        return
+
+    # ==========================================================
+    # 12. DISPLAY RESEARCH TARGETS
+    # ==========================================================
+
+    print(
+        "\n--- Destinations Being Researched ---"
+    )
+
+    for destination in candidates:
+
+        print(
+            f"• {destination}"
+        )
+
+    # ==========================================================
+    # 13. OLLAMA — RESEARCH DESTINATIONS
+    # ==========================================================
+    #
+    # main.py now takes Gemini's candidates and gives them
+    # to ResearchAgent.
+    #
+    # ResearchAgent communicates with Ollama.
+    #
+    # ResearchAgent does NOT communicate with TravelAgent.
+    #
+    # ==========================================================
+
+    print_section(
+        "RESEARCHING DESTINATIONS"
+    )
+
+    research_result = research_agent.research(
+        destinations=candidates,
+
+        preferences=mood_preferences,
+
+        budget=budget_state
+    )
+
+    # ==========================================================
+    # 14. DISPLAY RESEARCH
+    # ==========================================================
+
+    print(
+        "\n--- Ollama Research ---"
+    )
+
+    print(
+        json.dumps(
+            research_result,
+            indent=4
+        )
+    )
+
+    # ==========================================================
+    # 15. VALIDATE RESEARCH
+    # ==========================================================
+
+    if not isinstance(
+        research_result,
+        dict
+    ):
+
+        print(
+            "\nResearchAgent returned an invalid result."
+        )
+
+        return
+
+    researched_destinations = (
+        research_result.get(
+            "destinations",
+            []
+        )
+    )
+
+    if not researched_destinations:
+
+        print(
+            "\nResearchAgent did not return "
+            "any research information."
+        )
+
+        return
+
+    # ==========================================================
+    # 16. FINAL GEMINI PASS
+    # ==========================================================
+    #
+    # main.py now sends ALL relevant information back
+    # to TravelAgent:
+    #
+    #     Original user request
+    #     Mood preferences
+    #     Current budget
+    #     Ollama research
+    #
+    # TravelAgent sends this to Gemini.
+    #
+    # Gemini now makes the FINAL recommendation.
+    #
+    # ==========================================================
+
+    print_section(
+        "GENERATING FINAL TRAVEL RECOMMENDATION"
+    )
+
+    final_response = travel_agent.ask(
+        user_input=user_input,
+
+        preferences=mood_preferences,
+
+        budget=budget_state,
+
+        research=research_result
+    )
+
+    # ==========================================================
+    # 17. DISPLAY FINAL RESULT
     # ==========================================================
 
     print_section(
@@ -184,11 +425,11 @@ def main():
     )
 
     print(
-        travel_response
+        final_response
     )
 
     # ==========================================================
-    # 11. DISPLAY CURRENT BUDGET
+    # 18. DISPLAY FINAL BUDGET
     # ==========================================================
 
     print_section(
