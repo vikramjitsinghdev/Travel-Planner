@@ -1,37 +1,66 @@
 class Budget:
     """
-    Travel budget manager.
+    Travel budget manager for the AI Travel Planner.
 
-    Budget maintains the financial state of the current
-    travel-planning session.
+    Budget has two separate financial states:
 
-    IMPORTANT ARCHITECTURE:
+        1. TEMPORARY ESTIMATES
+           --------------------------------
+           Used while the user is researching
+           and comparing possible trips.
 
-        main.py
-           |
-           +---- Budget
-           |
-           +---- TravelAgent
-           |
-           +---- ResearchAgent
-           |
-           +---- MapService
+           These do NOT reduce the actual budget.
 
-    Budget does NOT communicate directly with any AI agent
-    or external API.
+        2. CONFIRMED EXPENSES
+           --------------------------------
+           Created only after the user confirms
+           a selected trip.
 
-    main.py is responsible for passing budget information
-    between the systems.
+           These DO reduce the remaining budget.
 
-    The Budget class distinguishes between:
+    Main workflow:
 
-        1. Estimated costs
-        2. Confirmed expenses
+        Candidate Trip
+             ↓
+        Cost Research
+             ↓
+        set_estimates()
+             ↓
+        User reviews
+             ↓
+        ┌───────────────┐
+        │               │
+      Change          Confirm
+        │               │
+        ↓               ↓
+      clear        confirm_estimates()
+        │               │
+        └───────┐       ↓
+                │    COMMITTED
+                │
+                ↓
+          New Estimate
 
-    Estimated costs are temporary planning information.
 
-    Confirmed expenses actually reduce the remaining budget.
+    IMPORTANT:
+
+    Budget does NOT:
+
+        - search for destinations
+        - search for flights
+        - search for hotels
+        - communicate with Gemini
+        - communicate with Ollama
+        - communicate with MapTiler
+        - decide which trip is best
+
+    main.py controls communication between the
+    Budget and the other systems.
     """
+
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def __init__(
         self,
@@ -43,21 +72,21 @@ class Budget:
 
         Example:
 
-            Budget(2000)
+            Budget(5000)
 
         creates:
 
-            Total budget = 2000 CAD
+            Total budget = 5000 CAD
+            Spent = 0 CAD
+            Remaining = 5000 CAD
         """
 
         if total_budget is None:
-
             raise ValueError(
                 "A budget amount is required."
             )
 
         try:
-
             total_budget = float(
                 total_budget
             )
@@ -66,13 +95,11 @@ class Budget:
             TypeError,
             ValueError
         ):
-
             raise ValueError(
                 "Budget must be a valid number."
             )
 
         if total_budget < 0:
-
             raise ValueError(
                 "Budget cannot be negative."
             )
@@ -87,20 +114,10 @@ class Budget:
         ).upper()
 
         # ------------------------------------------------------
-        # Confirmed money already committed/spent.
+        # Confirmed spending.
         # ------------------------------------------------------
 
         self.spent = 0.0
-
-        # ------------------------------------------------------
-        # Temporary estimated costs.
-        #
-        # These do NOT reduce remaining budget.
-        # ------------------------------------------------------
-
-        self.estimated_costs = []
-
-        self.estimated_total = 0.0
 
         # ------------------------------------------------------
         # Confirmed expenses.
@@ -109,13 +126,24 @@ class Budget:
         self.expenses = []
 
         # ------------------------------------------------------
-        # Current remaining budget.
+        # Temporary trip estimate.
+        #
+        # This represents the trip currently being
+        # considered by the user.
+        # ------------------------------------------------------
+
+        self.estimated_costs = []
+
+        self.estimated_total = 0.0
+
+        # ------------------------------------------------------
+        # Actual remaining budget.
         # ------------------------------------------------------
 
         self.remaining = self.total_budget
 
     # ==========================================================
-    # ADD ESTIMATED COST
+    # ADD ONE TEMPORARY ESTIMATE
     # ==========================================================
 
     def add_estimate(
@@ -125,25 +153,29 @@ class Budget:
         description=""
     ):
         """
-        Add a temporary estimated travel cost.
-
-        Estimated costs are used while planning.
-
-        They DO NOT reduce the user's remaining budget.
+        Add one temporary estimated trip cost.
 
         Example:
 
             budget.add_estimate(
-                500,
-                "flight",
-                "Estimated round-trip flight"
+                800,
+                "accommodation",
+                "7 nights hotel"
             )
+
+        IMPORTANT:
+
+        This does NOT reduce the actual remaining
+        budget.
         """
 
         amount = self._validate_amount(
             amount,
             "Estimated cost"
         )
+
+        if not category:
+            category = "other"
 
         estimate = {
             "amount": amount,
@@ -167,7 +199,7 @@ class Budget:
         return estimate.copy()
 
     # ==========================================================
-    # ADD MULTIPLE ESTIMATES
+    # ADD MULTIPLE TEMPORARY ESTIMATES
     # ==========================================================
 
     def add_estimates(
@@ -177,29 +209,28 @@ class Budget:
         """
         Add multiple temporary estimated costs.
 
-        Expected format:
+        Example:
 
             [
                 {
                     "amount": 500,
-                    "category": "flight",
-                    "description": "Round trip"
+                    "category": "transportation",
+                    "description": "Fuel"
                 },
                 {
-                    "amount": 700,
-                    "category": "hotel",
-                    "description": "5 nights"
+                    "amount": 1200,
+                    "category": "accommodation",
+                    "description": "7 nights"
                 }
             ]
 
-        Returns the updated estimated costs.
+        Returns the current estimate state.
         """
 
         if not isinstance(
             estimates,
             list
         ):
-
             raise TypeError(
                 "estimates must be a list."
             )
@@ -210,7 +241,6 @@ class Budget:
                 estimate,
                 dict
             ):
-
                 raise ValueError(
                     "Each estimate must be a dictionary."
                 )
@@ -232,12 +262,60 @@ class Budget:
         return self.get_estimates()
 
     # ==========================================================
-    # GET ESTIMATES
+    # REPLACE CURRENT TRIP ESTIMATE
+    # ==========================================================
+
+    def set_estimates(
+        self,
+        estimates
+    ):
+        """
+        Replace the current temporary trip estimate.
+
+        This is the preferred method for main.py.
+
+        Example workflow:
+
+            Trip A
+              ↓
+            $4,500 estimate
+              ↓
+            User changes destination
+              ↓
+            set_estimates(Trip B)
+              ↓
+            Trip B replaces Trip A
+
+        No confirmed spending is affected.
+        """
+
+        if not isinstance(
+            estimates,
+            list
+        ):
+            raise TypeError(
+                "estimates must be a list."
+            )
+
+        # Remove previous temporary estimate.
+
+        self.clear_estimates()
+
+        # Add the new estimate.
+
+        self.add_estimates(
+            estimates
+        )
+
+        return self.get_status()
+
+    # ==========================================================
+    # GET CURRENT ESTIMATES
     # ==========================================================
 
     def get_estimates(self):
         """
-        Return all temporary estimated costs.
+        Return the current temporary trip estimate.
         """
 
         return {
@@ -245,7 +323,18 @@ class Budget:
                 self.estimated_total,
                 2
             ),
+
             "currency": self.currency,
+
+            "estimated_remaining": round(
+                self.get_estimated_remaining(),
+                2
+            ),
+
+            "estimates_affordable": (
+                self.estimate_is_affordable()
+            ),
+
             "estimated_costs": [
                 estimate.copy()
                 for estimate in self.estimated_costs
@@ -253,17 +342,16 @@ class Budget:
         }
 
     # ==========================================================
-    # CHECK ESTIMATED TRIP AFFORDABILITY
+    # CHECK ESTIMATE AFFORDABILITY
     # ==========================================================
 
-    def estimate_is_affordable(
-        self
-    ):
+    def estimate_is_affordable(self):
         """
-        Determine whether all current estimated costs
-        could fit within the remaining budget.
+        Determine whether the current temporary
+        trip estimate fits within the actual
+        remaining budget.
 
-        This does NOT commit any expenses.
+        Does NOT commit anything.
         """
 
         return (
@@ -277,10 +365,10 @@ class Budget:
 
     def get_estimated_remaining(self):
         """
-        Return the amount that would remain if all
-        current estimates were committed.
+        Calculate how much money would remain if
+        the current temporary trip were confirmed.
 
-        This does NOT actually spend anything.
+        Does NOT modify the actual budget.
         """
 
         return round(
@@ -290,33 +378,46 @@ class Budget:
         )
 
     # ==========================================================
-    # CONFIRM ESTIMATES
+    # CONFIRM CURRENT TRIP
     # ==========================================================
 
     def confirm_estimates(self):
         """
-        Convert the current estimated costs into
-        confirmed expenses.
+        Commit the current temporary trip estimate
+        to the actual budget.
 
-        This is intended to be called only after the
-        user chooses to proceed with the planned trip.
+        This should only be called AFTER the user
+        confirms the trip.
 
-        Example workflow:
+        Workflow:
 
-            Research
-                ↓
-            Estimated costs
-                ↓
-            User confirms trip
-                ↓
-            confirm_estimates()
+            Temporary estimate
+                    ↓
+              User confirms
+                    ↓
+          confirm_estimates()
+                    ↓
+           Confirmed expenses
+                    ↓
+             Budget reduced
         """
 
         if not self.estimate_is_affordable():
 
             raise ValueError(
-                "Estimated costs exceed the remaining budget."
+                "The selected trip exceeds the "
+                "remaining budget."
             )
+
+        if not self.estimated_costs:
+
+            raise ValueError(
+                "There are no estimated costs to confirm."
+            )
+
+        # ------------------------------------------------------
+        # Move temporary costs into confirmed expenses.
+        # ------------------------------------------------------
 
         for estimate in self.estimated_costs:
 
@@ -324,17 +425,29 @@ class Budget:
                 estimate.copy()
             )
 
+        # ------------------------------------------------------
+        # Update actual spending.
+        # ------------------------------------------------------
+
         self.spent = round(
             self.spent
             + self.estimated_total,
             2
         )
 
+        # ------------------------------------------------------
+        # Update actual remaining budget.
+        # ------------------------------------------------------
+
         self.remaining = round(
             self.total_budget
             - self.spent,
             2
         )
+
+        # ------------------------------------------------------
+        # Remove temporary estimate.
+        # ------------------------------------------------------
 
         self.clear_estimates()
 
@@ -351,12 +464,18 @@ class Budget:
         description=""
     ):
         """
-        Add a confirmed expense.
+        Add an expense directly to the confirmed budget.
 
-        This immediately reduces the remaining budget.
+        Use this only when the application has a reason
+        to immediately commit a cost.
 
-        Use this for costs that have actually been
-        selected/confirmed by the user.
+        For the normal trip-selection workflow,
+        main.py should generally use:
+
+            set_estimates()
+            confirm_estimates()
+
+        instead.
         """
 
         amount = self._validate_amount(
@@ -407,17 +526,19 @@ class Budget:
         """
         Add multiple confirmed expenses.
 
-        Each expense is validated before being committed.
+        All expenses are validated before anything
+        is committed.
         """
 
         if not isinstance(
             expenses,
             list
         ):
-
             raise TypeError(
                 "expenses must be a list."
             )
+
+        validated = []
 
         total = 0.0
 
@@ -427,7 +548,6 @@ class Budget:
                 expense,
                 dict
             ):
-
                 raise ValueError(
                     "Each expense must be a dictionary."
                 )
@@ -439,6 +559,26 @@ class Budget:
                 "Expense"
             )
 
+            validated.append(
+                {
+                    "amount": amount,
+
+                    "category": str(
+                        expense.get(
+                            "category",
+                            "other"
+                        )
+                    ),
+
+                    "description": str(
+                        expense.get(
+                            "description",
+                            ""
+                        )
+                    )
+                }
+            )
+
             total += amount
 
         if total > self.remaining:
@@ -447,38 +587,44 @@ class Budget:
                 "Expenses exceed the remaining budget."
             )
 
-        for expense in expenses:
+        # ------------------------------------------------------
+        # Commit only after everything has been validated.
+        # ------------------------------------------------------
 
-            self.add_expense(
-                amount=expense.get(
-                    "amount"
-                ),
-                category=expense.get(
-                    "category",
-                    "other"
-                ),
-                description=expense.get(
-                    "description",
-                    ""
-                )
+        for expense in validated:
+
+            self.expenses.append(
+                expense.copy()
             )
+
+        self.spent = round(
+            self.spent + total,
+            2
+        )
+
+        self.remaining = round(
+            self.total_budget - self.spent,
+            2
+        )
 
         return self.get_status()
 
     # ==========================================================
-    # CLEAR ESTIMATES
+    # CLEAR TEMPORARY ESTIMATE
     # ==========================================================
 
     def clear_estimates(self):
         """
-        Remove all temporary estimated costs.
+        Discard the current temporary trip estimate.
 
-        This is useful when:
+        Used when:
 
-            - User changes destinations.
-            - User changes budget.
-            - A search is discarded.
-            - A new trip search begins.
+            - user changes destination
+            - user changes trip requirements
+            - user rejects the trip
+            - a new search begins
+
+        Confirmed spending is NOT affected.
         """
 
         self.estimated_costs = []
@@ -486,12 +632,12 @@ class Budget:
         self.estimated_total = 0.0
 
     # ==========================================================
-    # CHECK REMAINING
+    # CHECK ACTUAL REMAINING BUDGET
     # ==========================================================
 
     def get_remaining(self):
         """
-        Return confirmed remaining budget.
+        Return the actual confirmed remaining budget.
         """
 
         return round(
@@ -500,7 +646,7 @@ class Budget:
         )
 
     # ==========================================================
-    # CHECK SPENT
+    # CHECK ACTUAL SPENDING
     # ==========================================================
 
     def get_spent(self):
@@ -514,12 +660,12 @@ class Budget:
         )
 
     # ==========================================================
-    # CHECK TOTAL
+    # CHECK TOTAL BUDGET
     # ==========================================================
 
     def get_total(self):
         """
-        Return original total budget.
+        Return the original total budget.
         """
 
         return round(
@@ -528,15 +674,15 @@ class Budget:
         )
 
     # ==========================================================
-    # CHECK STATUS
+    # COMPLETE STATUS
     # ==========================================================
 
     def get_status(self):
         """
-        Return the complete current budget state.
+        Return the complete financial state.
 
-        This is the main method that main.py should pass
-        to TravelAgent, ResearchAgent, MapService, etc.
+        This is the primary method that main.py
+        should pass to the AI systems.
         """
 
         return {
@@ -557,6 +703,10 @@ class Budget:
 
             "currency": self.currency,
 
+            # --------------------------------------------------
+            # Temporary trip estimate
+            # --------------------------------------------------
+
             "estimated_total": round(
                 self.estimated_total,
                 2
@@ -576,6 +726,10 @@ class Budget:
                 for estimate in self.estimated_costs
             ],
 
+            # --------------------------------------------------
+            # Confirmed spending
+            # --------------------------------------------------
+
             "expenses": [
                 expense.copy()
                 for expense in self.expenses
@@ -583,7 +737,7 @@ class Budget:
         }
 
     # ==========================================================
-    # CHECK WHETHER AN EXPENSE IS AFFORDABLE
+    # CHECK SINGLE EXPENSE
     # ==========================================================
 
     def can_afford(
@@ -591,10 +745,10 @@ class Budget:
         amount
     ):
         """
-        Check whether a confirmed expense can fit
-        within the remaining budget.
+        Check whether an amount fits within the
+        actual remaining budget.
 
-        This does NOT add the expense.
+        Does NOT modify anything.
         """
 
         try:
@@ -611,7 +765,6 @@ class Budget:
             return False
 
         if amount < 0:
-
             return False
 
         return (
@@ -619,7 +772,7 @@ class Budget:
         )
 
     # ==========================================================
-    # CHECK WHETHER AN ENTIRE TRIP IS AFFORDABLE
+    # CHECK ENTIRE TRIP
     # ==========================================================
 
     def can_afford_trip(
@@ -627,10 +780,10 @@ class Budget:
         total_estimated_cost
     ):
         """
-        Check whether an entire estimated trip fits
-        within the remaining budget.
+        Check whether an entire trip can fit within
+        the actual remaining budget.
 
-        This does NOT commit the costs.
+        Does NOT modify anything.
         """
 
         try:
@@ -647,7 +800,6 @@ class Budget:
             return False
 
         if total_estimated_cost < 0:
-
             return False
 
         return (
@@ -656,18 +808,12 @@ class Budget:
         )
 
     # ==========================================================
-    # RESET EVERYTHING
+    # RESET
     # ==========================================================
 
     def reset(self):
         """
-        Completely reset the budget.
-
-        This removes:
-
-            - confirmed expenses
-            - temporary estimates
-            - spending
+        Completely reset the current budget.
 
         The original total budget remains unchanged.
         """
@@ -683,7 +829,7 @@ class Budget:
         self.clear_estimates()
 
     # ==========================================================
-    # INTERNAL VALIDATION
+    # INTERNAL AMOUNT VALIDATION
     # ==========================================================
 
     @staticmethod

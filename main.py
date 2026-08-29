@@ -1,15 +1,17 @@
 import json
+from datetime import datetime
 
 from ai.mood_agent import MoodAgent
 from ai.travel_agent import TravelAgent
 from ai.research_agent import ResearchAgent
 
 from travel.budget import Budget
+
 from location.map import MapService
 
 
 # ==============================================================
-# DISPLAY HELPERS
+# FORMATTING
 # ==============================================================
 
 def print_section(title):
@@ -26,7 +28,8 @@ def print_json(data):
     print(
         json.dumps(
             data,
-            indent=4
+            indent=4,
+            ensure_ascii=False
         )
     )
 
@@ -37,17 +40,14 @@ def print_json(data):
 
 def ask_required(prompt):
     """
-    Ask the user for required text input.
+    Ask for a required text input.
     """
 
     while True:
 
-        value = input(
-            prompt
-        ).strip()
+        value = input(prompt).strip()
 
         if value:
-
             return value
 
         print(
@@ -57,47 +57,29 @@ def ask_required(prompt):
 
 def ask_optional(prompt):
     """
-    Ask the user for optional text input.
-
-    Empty input becomes None.
+    Ask for an optional text input.
     """
 
-    value = input(
-        prompt
-    ).strip()
-
-    if not value:
-
-        return None
-
-    return value
+    return input(prompt).strip()
 
 
-def ask_positive_integer(
-    prompt,
-    minimum=1
-):
+def ask_positive_integer(prompt):
     """
     Ask for a positive integer.
     """
 
     while True:
 
-        value = input(
-            prompt
-        ).strip()
+        value = input(prompt).strip()
 
         try:
 
-            number = int(
-                value
-            )
+            number = int(value)
 
-            if number < minimum:
+            if number <= 0:
 
                 print(
-                    f"Please enter a number "
-                    f"greater than or equal to {minimum}."
+                    "Please enter a number greater than 0."
                 )
 
                 continue
@@ -111,36 +93,30 @@ def ask_positive_integer(
             )
 
 
-def ask_positive_float(
-    prompt,
-    minimum=0
-):
+def ask_budget():
     """
-    Ask for a valid non-negative number.
+    Ask for the total travel budget.
     """
 
     while True:
 
         value = input(
-            prompt
+            "\nWhat is your total travel budget in CAD?\n> "
         ).strip()
 
         try:
 
-            number = float(
-                value
-            )
+            amount = float(value)
 
-            if number < minimum:
+            if amount < 0:
 
                 print(
-                    f"Please enter a number "
-                    f"greater than or equal to {minimum}."
+                    "Budget cannot be negative."
                 )
 
                 continue
 
-            return number
+            return amount
 
         except ValueError:
 
@@ -148,244 +124,137 @@ def ask_positive_float(
                 "Please enter a valid number."
             )
 
-def infer_country_from_departure(
-    departure
+
+# ==============================================================
+# DEPARTURE COUNTRY DETECTION
+# ==============================================================
+
+def detect_country_from_departure(
+    departure_location
 ):
     """
-    Try to determine the departure country from the
-    user's departure location.
+    Basic country detection from the departure
+    location.
 
-    This is intentionally conservative.
+    This is intentionally simple.
 
-    We only infer a country when there is a strong
-    indication.
+    The purpose is to support the domestic-trip
+    workflow without requiring the user to manually
+    enter the country when it can reasonably be
+    inferred.
 
-    Returns:
-        country name or None
+    Example:
+
+        Saint John, NB, Canada
+
+    returns:
+
+        Canada
     """
 
-    if not isinstance(
-        departure,
-        str
-    ):
+    text = departure_location.lower()
 
-        return None
-
-    text = departure.strip().lower()
-
-    if not text:
-
-        return None
-
-    # ----------------------------------------------------------
-    # Explicit country names.
-    # ----------------------------------------------------------
-
-    explicit_countries = {
+    country_map = {
 
         "canada": "Canada",
 
-        "united states": "United States",
-
         "usa": "United States",
-
         "u.s.a": "United States",
+        "united states": "United States",
+        "america": "United States",
 
-        "united states of america": "United States",
+        "india": "India",
 
-        "mexico": "Mexico",
+        "japan": "Japan",
+
+        "switzerland": "Switzerland",
 
         "france": "France",
 
         "germany": "Germany",
 
-        "italy": "Italy",
-
-        "spain": "Spain",
-
-        "japan": "Japan",
-
-        "india": "India",
+        "uk": "United Kingdom",
+        "united kingdom": "United Kingdom",
 
         "australia": "Australia",
 
-        "new zealand": "New Zealand",
-
-        "switzerland": "Switzerland",
-
-        "united kingdom": "United Kingdom",
-
-        "uk": "United Kingdom"
+        "new zealand": "New Zealand"
     }
 
-    for text_name, country in explicit_countries.items():
+    for keyword, country in country_map.items():
 
-        if text_name in text:
+        if keyword in text:
 
             return country
 
-    # ----------------------------------------------------------
-    # Canadian provinces / territories.
-    #
-    # If the departure contains one of these, we can safely
-    # infer Canada.
-    # ----------------------------------------------------------
+    # Canadian province detection.
 
-    canadian_regions = [
+    canadian_provinces = {
 
-        "ab",
-        "alberta",
+        "nb": "Canada",
+        "new brunswick": "Canada",
 
-        "bc",
-        "b.c",
-        "british columbia",
+        "ns": "Canada",
+        "nova scotia": "Canada",
 
-        "mb",
-        "manitoba",
+        "pei": "Canada",
+        "prince edward island": "Canada",
 
-        "nb",
-        "n.b",
-        "new brunswick",
+        "nl": "Canada",
+        "newfoundland": "Canada",
 
-        "nl",
-        "n.l",
-        "newfoundland",
-        "newfoundland and labrador",
+        "qc": "Canada",
+        "quebec": "Canada",
 
-        "ns",
-        "n.s",
-        "nova scotia",
+        "on": "Canada",
+        "ontario": "Canada",
 
-        "nt",
-        "n.t",
-        "northwest territories",
+        "mb": "Canada",
+        "manitoba": "Canada",
 
-        "nu",
-        "n.u",
-        "nunavut",
+        "sk": "Canada",
+        "saskatchewan": "Canada",
 
-        "on",
-        "ontario",
+        "ab": "Canada",
+        "alberta": "Canada",
 
-        "pe",
-        "p.e",
-        "prince edward island",
+        "bc": "Canada",
+        "british columbia": "Canada",
 
-        "qc",
-        "quebec",
+        "yt": "Canada",
+        "yukon": "Canada",
 
-        "sk",
-        "saskatchewan",
+        "nt": "Canada",
+        "northwest territories": "Canada",
 
-        "yt",
-        "y.t",
-        "yukon"
-    ]
+        "nu": "Canada",
+        "nunavut": "Canada"
+    }
 
-    # ----------------------------------------------------------
-    # Check explicit region words first.
-    # ----------------------------------------------------------
+    for keyword, country in canadian_provinces.items():
 
-    for region in canadian_regions:
+        if keyword in text:
 
-        if region in text:
-
-            return "Canada"
-
-    # ----------------------------------------------------------
-    # Common Canadian city + location combinations.
-    #
-    # This is intentionally limited.
-    # ----------------------------------------------------------
-
-    canadian_cities = [
-
-        "saint john",
-
-        "fredericton",
-
-        "moncton",
-
-        "halifax",
-
-        "toronto",
-
-        "ottawa",
-
-        "montreal",
-
-        "quebec city",
-
-        "vancouver",
-
-        "victoria",
-
-        "calgary",
-
-        "edmonton",
-
-        "winnipeg",
-
-        "saskatoon",
-
-        "regina",
-
-        "kelowna",
-
-        "hamilton",
-
-        "london"
-    ]
-
-    for city in canadian_cities:
-
-        if city in text:
-
-            return "Canada"
-
-    # ----------------------------------------------------------
-    # Unknown.
-    # ----------------------------------------------------------
+            return country
 
     return None
+
+
 # ==============================================================
-# COLLECT BASIC TRIP INFORMATION
+# TRIP SCOPE
 # ==============================================================
 
-def collect_trip_information():
+def ask_trip_scope(
+    departure_country
+):
     """
-    Collect the basic constraints of the trip.
+    Ask whether the user wants domestic,
+    international, or anywhere travel.
 
-    This information is separate from the user's moods.
-
-    Example:
-
-        departure_location
-        trip_scope
-        country
-        travelers
-        duration_days
-        travel_dates
-        maximum_total_travel_time
-        transportation_preference
-        accommodation_preference
+    If domestic is selected and the departure
+    country is already known, the country question
+    is skipped.
     """
-
-    print_section(
-        "BASIC TRIP INFORMATION"
-    )
-
-    # ----------------------------------------------------------
-    # Departure
-    # ----------------------------------------------------------
-
-    departure_location = ask_required(
-        "\nWhere will the trip start from?\n> "
-    )
-
-    # ----------------------------------------------------------
-    # Trip scope
-    # ----------------------------------------------------------
 
     print(
         "\nWhere do you want to travel?"
@@ -408,74 +277,92 @@ def collect_trip_information():
         choice = input(
             "> "
         ).strip()
+
         if choice == "1":
 
-            trip_scope = "domestic"
-
-            # ------------------------------------------------------
-            # Try to determine the country from the departure
-            # location.
-            # ------------------------------------------------------
-
-            inferred_country = (
-                infer_country_from_departure(
-                    departure_location
-                )
-            )
-
-            if inferred_country:
-
-                country = inferred_country
+            if departure_country:
 
                 print(
                     f"\nDetected departure country: "
-                    f"{country}"
+                    f"{departure_country}"
                 )
 
                 print(
-                    "Using this as the domestic travel country."
+                    "Using this as the domestic "
+                    "travel country."
                 )
 
-            else:
+                return {
+                    "trip_scope": "domestic",
+                    "country": departure_country
+                }
 
-                # --------------------------------------------------
-                # Only ask the question when the country could
-                # NOT be reliably determined.
-                # --------------------------------------------------
-
-                country = ask_required(
-                    "\nWhich country are you traveling within?\n> "
-                )
-
-            break
-
-        elif choice == "2":
-
-            trip_scope = "international"
-
-            country = ask_optional(
-                "Is there a specific country you want to visit? "
-                "(Press Enter for any country)\n> "
+            country = ask_required(
+                "\nWhich country are you traveling within?\n> "
             )
 
-            break
+            return {
+                "trip_scope": "domestic",
+                "country": country
+            }
 
-        elif choice == "3":
+        if choice == "2":
 
-            trip_scope = "anywhere"
+            return {
+                "trip_scope": "international",
+                "country": None
+            }
 
-            country = None
+        if choice == "3":
 
-            break
+            return {
+                "trip_scope": "anywhere",
+                "country": None
+            }
 
-        else:
+        print(
+            "Please choose 1, 2, or 3."
+        )
 
-            print(
-                "Please choose 1, 2, or 3."
-            )
+
+# ==============================================================
+# BASIC TRIP INFORMATION
+# ==============================================================
+
+def collect_trip_information():
+    """
+    Collect the user's basic trip constraints.
+
+    These are passed to MoodAgent and TravelAgent
+    as structured information.
+    """
+
+    print_section(
+        "BASIC TRIP INFORMATION"
+    )
 
     # ----------------------------------------------------------
-    # Number of travelers
+    # Departure
+    # ----------------------------------------------------------
+
+    departure_location = ask_required(
+        "\nWhere will the trip start from?\n> "
+    )
+
+    departure_country = detect_country_from_departure(
+        departure_location
+    )
+
+    # ----------------------------------------------------------
+    # Destination scope
+    # ----------------------------------------------------------
+
+    scope_information = ask_trip_scope(
+        departure_country
+    )
+
+    # ----------------------------------------------------------
+    # Travelers
     # ----------------------------------------------------------
 
     travelers = ask_positive_integer(
@@ -483,7 +370,7 @@ def collect_trip_information():
     )
 
     # ----------------------------------------------------------
-    # Trip duration
+    # Duration
     # ----------------------------------------------------------
 
     duration_days = ask_positive_integer(
@@ -494,7 +381,7 @@ def collect_trip_information():
     # Travel dates
     # ----------------------------------------------------------
 
-    travel_dates = ask_optional(
+    travel_dates = ask_required(
         "\nWhen do you want to travel? "
         "(Example: July 2027, July 10-17 2027)\n> "
     )
@@ -504,10 +391,14 @@ def collect_trip_information():
     # ----------------------------------------------------------
 
     maximum_total_travel_time = ask_optional(
-        "\nWhat is the maximum travel time you are comfortable "
-        "with from your departure location?\n"
+        "\nWhat is the maximum travel time you are "
+        "comfortable with from your departure location?\n"
         "(Example: 6 hours, 12 hours, no preference)\n> "
     )
+
+    if not maximum_total_travel_time:
+
+        maximum_total_travel_time = "no preference"
 
     # ----------------------------------------------------------
     # Maximum distance
@@ -518,6 +409,10 @@ def collect_trip_information():
         "(Example: 1000 km, no preference)\n> "
     )
 
+    if not maximum_distance:
+
+        maximum_distance = "no preference"
+
     # ----------------------------------------------------------
     # Transportation
     # ----------------------------------------------------------
@@ -526,6 +421,10 @@ def collect_trip_information():
         "\nPreferred transportation?\n"
         "(Example: flight, car, train, bus, no preference)\n> "
     )
+
+    if not transportation_preference:
+
+        transportation_preference = "no preference"
 
     # ----------------------------------------------------------
     # Accommodation
@@ -536,6 +435,10 @@ def collect_trip_information():
         "(Example: hotel, hostel, resort, Airbnb, no preference)\n> "
     )
 
+    if not accommodation_preference:
+
+        accommodation_preference = "no preference"
+
     # ----------------------------------------------------------
     # Safety
     # ----------------------------------------------------------
@@ -545,24 +448,42 @@ def collect_trip_information():
         "(Press Enter if none)\n> "
     )
 
+    if not safety_requirement:
+
+        safety_requirement = None
+
     # ----------------------------------------------------------
-    # Additional requirements
+    # Other
     # ----------------------------------------------------------
 
-    other = ask_optional(
+    other_requirements = ask_optional(
         "\nAny other trip requirements?\n"
         "(Press Enter if none)\n> "
     )
 
+    if not other_requirements:
+
+        other_requirements = []
+
+    else:
+
+        other_requirements = [
+            other_requirements
+        ]
+
     # ----------------------------------------------------------
-    # Construct trip information
+    # Construct structured information.
     # ----------------------------------------------------------
 
     return {
 
-        "trip_scope": trip_scope,
+        "trip_scope": scope_information.get(
+            "trip_scope"
+        ),
 
-        "country": country,
+        "country": scope_information.get(
+            "country"
+        ),
 
         "region": None,
 
@@ -572,94 +493,61 @@ def collect_trip_information():
 
         "departure_location": departure_location,
 
-        "maximum_total_travel_time": (
-            maximum_total_travel_time
-        ),
+        "maximum_total_travel_time":
+            maximum_total_travel_time,
 
-        "maximum_distance": (
-            maximum_distance
-        ),
+        "maximum_distance":
+            maximum_distance,
 
-        "safety_requirement": (
-            safety_requirement
-        ),
+        "safety_requirement":
+            safety_requirement,
 
-        "transportation_preference": (
-            transportation_preference
-        ),
+        "transportation_preference":
+            transportation_preference,
 
-        "accommodation_preference": (
-            accommodation_preference
-        ),
+        "accommodation_preference":
+            accommodation_preference,
 
-        "travel_dates": travel_dates,
+        "travel_dates":
+            travel_dates,
 
-        "other": (
-            [other]
-            if other
-            else []
-        )
+        "other":
+            other_requirements
     }
 
 
 # ==============================================================
-# GET BUDGET
-# ==============================================================
-
-def collect_budget():
-    """
-    Ask for the user's total CAD budget.
-    """
-
-    print_section(
-        "TRAVEL BUDGET"
-    )
-
-    total_budget = ask_positive_float(
-        "\nWhat is your total travel budget in CAD?\n> "
-    )
-
-    return Budget(
-        total_budget=total_budget,
-        currency="CAD"
-    )
-
-
-# ==============================================================
-# EXTRACT CANDIDATES
+# CANDIDATE EXTRACTION
 # ==============================================================
 
 def extract_candidates(
     candidate_result
 ):
     """
-    Extract destination names from TravelAgent output.
-
-    Expected:
-
-        {
-            "candidates": [
-                {
-                    "name": "Vancouver",
-                    "country": "Canada"
-                }
-            ]
-        }
+    Convert TravelAgent candidate output into
+    a clean list of destination strings.
     """
+
+    candidates = []
 
     if not isinstance(
         candidate_result,
         dict
     ):
+        return candidates
 
-        return []
-
-    candidates = []
-
-    for candidate in candidate_result.get(
+    raw_candidates = candidate_result.get(
         "candidates",
         []
+    )
+
+    if not isinstance(
+        raw_candidates,
+        list
     ):
+        return candidates
+
+    for candidate in raw_candidates:
 
         if isinstance(
             candidate,
@@ -675,49 +563,543 @@ def extract_candidates(
             )
 
             if not name:
-
                 continue
 
             if country:
 
-                candidates.append(
+                destination = (
                     f"{name}, {country}"
                 )
 
             else:
 
-                candidates.append(
-                    name
-                )
+                destination = name
+
+            candidates.append(
+                destination
+            )
 
         elif isinstance(
             candidate,
             str
         ):
 
-            candidate = candidate.strip()
-
-            if candidate:
-
-                candidates.append(
-                    candidate
-                )
-
-    # ----------------------------------------------------------
-    # Remove duplicates while preserving order.
-    # ----------------------------------------------------------
-
-    unique_candidates = []
-
-    for candidate in candidates:
-
-        if candidate not in unique_candidates:
-
-            unique_candidates.append(
+            candidates.append(
                 candidate
             )
 
-    return unique_candidates
+    return candidates
+
+
+# ==============================================================
+# MAP VALIDATION
+# ==============================================================
+
+def validate_map_results(
+    map_results
+):
+    """
+    Keep only usable MapTiler results.
+    """
+
+    if not isinstance(
+        map_results,
+        list
+    ):
+        return []
+
+    valid_results = []
+
+    for location in map_results:
+
+        if not isinstance(
+            location,
+            dict
+        ):
+            continue
+
+        if not location.get(
+            "found",
+            False
+        ):
+            continue
+
+        coordinates = location.get(
+            "coordinates"
+        )
+
+        if not isinstance(
+            coordinates,
+            dict
+        ):
+            continue
+
+        latitude = coordinates.get(
+            "latitude"
+        )
+
+        longitude = coordinates.get(
+            "longitude"
+        )
+
+        if latitude is None:
+            continue
+
+        if longitude is None:
+            continue
+
+        valid_results.append(
+            location
+        )
+
+    return valid_results
+
+
+# ==============================================================
+# RESEARCH + MAP
+# ==============================================================
+
+def gather_destination_information(
+    candidates,
+    mood_preferences,
+    budget,
+    research_agent,
+    map_service
+):
+    """
+    Research candidates using ResearchAgent and
+    MapService.
+
+    main.py remains the communication layer.
+    """
+
+    print_section(
+        "MAPPING DESTINATIONS"
+    )
+
+    print(
+        "\nGetting geographic information from MapTiler..."
+    )
+
+    try:
+
+        map_results = map_service.get_locations(
+            candidates
+        )
+
+    except Exception as error:
+
+        print(
+            "\nMapTiler failed."
+        )
+
+        print(
+            f"Error: {error}"
+        )
+
+        map_results = []
+
+    valid_map_results = validate_map_results(
+        map_results
+    )
+
+    print(
+        "\n--- Map Information ---"
+    )
+
+    print_json(
+        map_results
+    )
+
+    print_section(
+        "RESEARCHING DESTINATIONS"
+    )
+
+    try:
+
+        research_result = research_agent.research(
+            destinations=candidates,
+
+            preferences=mood_preferences,
+
+            budget=budget
+        )
+
+    except Exception as error:
+
+        print(
+            "\nResearchAgent failed."
+        )
+
+        print(
+            f"Error: {error}"
+        )
+
+        research_result = {
+            "destinations": []
+        }
+
+    print(
+        "\n--- Research Information ---"
+    )
+
+    print_json(
+        research_result
+    )
+
+    return (
+        research_result,
+        valid_map_results
+    )
+
+
+# ==============================================================
+# DISPLAY FINAL OPTIONS
+# ==============================================================
+
+def display_final_options(
+    response
+):
+    """
+    Display the final Gemini travel options.
+    """
+
+    print_section(
+        "TRAVEL OPTIONS"
+    )
+
+    print(
+        response
+    )
+
+
+# ==============================================================
+# SELECT DESTINATION
+# ==============================================================
+
+def select_destination(
+    candidates
+):
+    """
+    Ask the user to select one of the candidate
+    destinations.
+
+    Returns:
+
+        index
+        None
+    """
+
+    if not candidates:
+
+        return None
+
+    print_section(
+        "SELECT YOUR TRIP"
+    )
+
+    print(
+        "\nAvailable destinations:"
+    )
+
+    for index, destination in enumerate(
+        candidates,
+        start=1
+    ):
+
+        print(
+            f"{index}. {destination}"
+        )
+
+    print(
+        "\n0. Go back / change requirements"
+    )
+
+    while True:
+
+        choice = input(
+            "\nWhich trip would you like?\n> "
+        ).strip()
+
+        try:
+
+            number = int(
+                choice
+            )
+
+        except ValueError:
+
+            print(
+                "Please enter a valid number."
+            )
+
+            continue
+
+        if number == 0:
+
+            return None
+
+        if 1 <= number <= len(candidates):
+
+            return number - 1
+
+        print(
+            "Please choose one of the listed options."
+        )
+
+
+# ==============================================================
+# SELECTED TRIP COST DISPLAY
+# ==============================================================
+
+def display_selected_trip(
+    selected_trip,
+    budget
+):
+    """
+    Display the selected trip's temporary cost
+    estimate.
+    """
+
+    print_section(
+        "SELECTED TRIP COST ESTIMATE"
+    )
+
+    print(
+        f"\nDestination: "
+        f"{selected_trip.get('destination')}"
+    )
+
+    print(
+        "\n--- Estimated Costs ---"
+    )
+
+    costs = selected_trip.get(
+        "costs",
+        []
+    )
+
+    if not costs:
+
+        print(
+            "No known costs were returned."
+        )
+
+    else:
+
+        for cost in costs:
+
+            category = cost.get(
+                "category",
+                "other"
+            )
+
+            amount = cost.get(
+                "amount"
+            )
+
+            description = cost.get(
+                "description",
+                ""
+            )
+
+            if amount is None:
+
+                print(
+                    f"• {category}: UNKNOWN"
+                )
+
+            else:
+
+                print(
+                    f"• {category}: "
+                    f"{amount:.2f} CAD"
+                )
+
+            if description:
+
+                print(
+                    f"  {description}"
+                )
+
+    # ----------------------------------------------------------
+    # Add known costs temporarily to Budget.
+    # ----------------------------------------------------------
+
+    known_costs = [
+        cost
+        for cost in costs
+        if cost.get("amount") is not None
+    ]
+
+    try:
+
+        budget.set_estimates(
+            known_costs
+        )
+
+    except Exception as error:
+
+        print(
+            "\nCould not create budget estimate."
+        )
+
+        print(
+            f"Error: {error}"
+        )
+
+        return False
+
+    status = budget.get_status()
+
+    print(
+        "\n--- Budget Impact ---"
+    )
+
+    print(
+        f"Current budget: "
+        f"{status['remaining']:.2f} "
+        f"{status['currency']}"
+    )
+
+    print(
+        f"Estimated trip cost: "
+        f"{status['estimated_total']:.2f} "
+        f"{status['currency']}"
+    )
+
+    print(
+        f"Remaining after trip: "
+        f"{status['estimated_remaining']:.2f} "
+        f"{status['currency']}"
+    )
+
+    if status[
+        "estimates_affordable"
+    ]:
+
+        print(
+            "\n✓ The known estimated costs "
+            "fit within the current budget."
+        )
+
+    else:
+
+        print(
+            "\n✗ The known estimated costs "
+            "exceed the current budget."
+        )
+
+    unknown_costs = selected_trip.get(
+        "unknown_costs",
+        []
+    )
+
+    if unknown_costs:
+
+        print(
+            "\n--- Unknown Costs ---"
+        )
+
+        for item in unknown_costs:
+
+            print(
+                f"• {item}"
+            )
+
+    notes = selected_trip.get(
+        "notes",
+        []
+    )
+
+    if notes:
+
+        print(
+            "\n--- Notes ---"
+        )
+
+        for note in notes:
+
+            print(
+                f"• {note}"
+            )
+
+    return True
+
+
+# ==============================================================
+# FINAL TRIP CONFIRMATION
+# ==============================================================
+
+def confirm_trip(
+    budget
+):
+    """
+    Ask the user whether the temporary trip
+    should be committed.
+    """
+
+    while True:
+
+        print(
+            "\nWhat would you like to do?"
+        )
+
+        print(
+            "1. Confirm this trip"
+        )
+
+        print(
+            "2. Change something"
+        )
+
+        print(
+            "3. Choose another destination"
+        )
+
+        print(
+            "4. Cancel"
+        )
+
+        choice = input(
+            "> "
+        ).strip()
+
+        if choice == "1":
+
+            try:
+
+                budget.confirm_estimates()
+
+                return "confirmed"
+
+            except Exception as error:
+
+                print(
+                    "\nTrip could not be confirmed."
+                )
+
+                print(
+                    f"Error: {error}"
+                )
+
+                return "cancel"
+
+        if choice == "2":
+
+            return "change"
+
+        if choice == "3":
+
+            return "another"
+
+        if choice == "4":
+
+            return "cancel"
+
+        print(
+            "Please choose 1, 2, 3, or 4."
+        )
 
 
 # ==============================================================
@@ -729,57 +1111,57 @@ def main():
     Main controller for the AI Travel Planner.
 
     ============================================================
-    CURRENT ARCHITECTURE
+    COMPLETE WORKFLOW
     ============================================================
 
-    User
-      |
-      v
-    main.py
-      |
-      +--------------------+
-      |                    |
-      v                    v
-    Trip Info            User Request
-      |                    |
-      +---------+----------+
-                |
-                v
-           MoodAgent
-              Groq
-                |
-                v
-             main.py
-                |
-                v
-          TravelAgent
-             Gemini
-                |
-                v
-       Candidate Destinations
-                |
-          +-----+------+
-          |            |
-          v            v
-      MapService   ResearchAgent
-       MapTiler      Ollama
-          |            |
-          +-----+------+
-                |
-                v
-             main.py
-                |
-                v
-          TravelAgent
-             Gemini
-                |
-                v
-        Final Trip Options
-    """
+        User
+          ↓
+        Basic Trip Information
+          ↓
+        User Preferences
+          ↓
+        Budget
+          ↓
+        MoodAgent
+          ↓
+        main.py
+          ↓
+        TravelAgent.find_candidates()
+          ↓
+        Candidate Destinations
+          ↓
+        ┌──────────────────────┐
+        │                      │
+        ▼                      ▼
+    MapService            ResearchAgent
+     MapTiler                Ollama
+        │                      │
+        └──────────┬───────────┘
+                   ↓
+                main.py
+                   ↓
+        TravelAgent.ask()
+                   ↓
+          Final Trip Options
+                   ↓
+             User Selection
+                   ↓
+        TravelAgent.build_selected_trip()
+                   ↓
+          Temporary Budget
+             Estimate
+                   ↓
+             User Review
+             /        \
+         Change      Confirm
+           │            │
+           ↓            ↓
+       Re-search     Commit
+                         ↓
+                   Final Budget
 
-    # ==========================================================
-    # HEADER
-    # ==========================================================
+    main.py is the communication layer.
+    """
 
     print("=" * 60)
     print("AI TRAVEL PLANNER")
@@ -789,12 +1171,10 @@ def main():
     # 1. BASIC TRIP INFORMATION
     # ==========================================================
 
-    trip_information = (
-        collect_trip_information()
-    )
+    trip_information = collect_trip_information()
 
     # ==========================================================
-    # 2. USER'S PERSONAL TRAVEL PREFERENCES
+    # 2. USER TRAVEL PREFERENCES
     # ==========================================================
 
     print_section(
@@ -809,21 +1189,30 @@ def main():
     # 3. BUDGET
     # ==========================================================
 
-    budget = collect_budget()
+    print_section(
+        "TRAVEL BUDGET"
+    )
+
+    total_budget = ask_budget()
+
+    budget = Budget(
+        total_budget=total_budget,
+        currency="CAD"
+    )
 
     # ==========================================================
-    # 4. CREATE SYSTEM COMPONENTS
+    # 4. INITIALIZE SYSTEMS
     # ==========================================================
 
     print_section(
         "INITIALIZING TRAVEL SYSTEMS"
     )
 
-    print(
-        "\nInitializing travel systems..."
-    )
-
     try:
+
+        print(
+            "\nInitializing travel systems..."
+        )
 
         mood_agent = MoodAgent()
 
@@ -832,6 +1221,10 @@ def main():
         research_agent = ResearchAgent()
 
         map_service = MapService()
+
+        print(
+            "All systems initialized."
+        )
 
     except Exception as error:
 
@@ -845,132 +1238,116 @@ def main():
 
         return
 
-    print(
-        "All systems initialized."
-    )
-
     # ==========================================================
-    # 5. MOOD ANALYSIS
+    # SEARCH / RESEARCH LOOP
+    # ==========================================================
+    #
+    # This loop allows the user to change requirements
+    # without ending the program.
+    #
     # ==========================================================
 
-    print_section(
-        "ANALYZING TRAVEL PREFERENCES"
-    )
+    while True:
 
-    try:
+        # ------------------------------------------------------
+        # 5. MOOD ANALYSIS
+        # ------------------------------------------------------
 
-        mood_preferences = mood_agent.interpret(
-            user_input=user_input,
-            trip_information=trip_information
+        print_section(
+            "ANALYZING TRAVEL PREFERENCES"
         )
 
-    except Exception as error:
+        try:
 
-        print(
-            "\nMoodAgent failed."
-        )
+            mood_agent_input = {
+                "user_input": user_input,
 
-        print(
-            f"Error: {error}"
-        )
+                "trip_information":
+                    trip_information
+            }
 
-        return
-
-    print(
-        "\n--- Mood Analysis ---"
-    )
-
-    print_json(
-        mood_preferences
-    )
-
-    # ==========================================================
-    # 6. COMBINE TRIP CONSTRAINTS
-    # ==========================================================
-
-    print(
-        "\n--- Trip Constraints ---"
-    )
-
-    print_json(
-        trip_information
-    )
-
-    # ----------------------------------------------------------
-    # Put the manually collected constraints into the mood
-    # profile so TravelAgent has one complete preference object.
-    # ----------------------------------------------------------
-
-    if isinstance(
-        mood_preferences,
-        dict
-    ):
-
-        mood_preferences[
-            "constraints"
-        ] = trip_information
-
-    # ==========================================================
-    # 7. INITIAL BUDGET
-    # ==========================================================
-
-    budget_state = (
-        budget.get_status()
-    )
-
-    print(
-        "\n--- Current Budget ---"
-    )
-
-    print_json(
-        budget_state
-    )
-
-    # ==========================================================
-    # 8. GEMINI CANDIDATE GENERATION
-    # ==========================================================
-
-    print_section(
-        "SELECTING CANDIDATE DESTINATIONS"
-    )
-
-    try:
-
-        candidate_result = (
-            travel_agent.find_candidates(
-
-                user_input=user_input,
-
-                preferences=mood_preferences,
-
-                budget=budget_state,
-
-                trip_information=trip_information
+            mood_preferences = mood_agent.interpret(
+                mood_agent_input
             )
+
+        except Exception as error:
+
+            # --------------------------------------------------
+            # Compatibility fallback.
+            #
+            # If MoodAgent currently accepts only a string,
+            # use the original user preference text.
+            # --------------------------------------------------
+
+            try:
+
+                mood_preferences = mood_agent.interpret(
+                    user_input
+                )
+
+            except Exception as second_error:
+
+                print(
+                    "\nMoodAgent failed."
+                )
+
+                print(
+                    f"Error: {second_error}"
+                )
+
+                return
+
+        print(
+            "\n--- Mood Analysis ---"
         )
 
-    except TypeError:
+        print_json(
+            mood_preferences
+        )
 
         # ------------------------------------------------------
-        # Temporary compatibility fallback.
-        #
-        # If your current TravelAgent.find_candidates()
-        # does not yet accept trip_information, this keeps
-        # the rest of the program working.
-        #
-        # We will remove this once TravelAgent is rewritten.
+        # 6. CURRENT TRIP CONSTRAINTS
         # ------------------------------------------------------
+
+        print(
+            "\n--- Trip Constraints ---"
+        )
+
+        print_json(
+            trip_information
+        )
+
+        # ------------------------------------------------------
+        # 7. CURRENT BUDGET
+        # ------------------------------------------------------
+
+        print(
+            "\n--- Current Budget ---"
+        )
+
+        print_json(
+            budget.get_status()
+        )
+
+        # ------------------------------------------------------
+        # 8. FIND CANDIDATES
+        # ------------------------------------------------------
+
+        print_section(
+            "SELECTING CANDIDATE DESTINATIONS"
+        )
 
         try:
 
             candidate_result = (
                 travel_agent.find_candidates(
-
                     user_input=user_input,
 
                     preferences=mood_preferences,
 
-                    budget=budget_state
+                    budget=budget.get_status(),
+
+                    trip_information=trip_information
                 )
             )
 
@@ -986,178 +1363,67 @@ def main():
 
             return
 
-    except Exception as error:
-
         print(
-            "\nTravelAgent candidate generation failed."
+            "\n--- Candidate Destinations ---"
         )
 
-        print(
-            f"Error: {error}"
+        print_json(
+            candidate_result
         )
 
-        return
-
-    # ==========================================================
-    # 9. DISPLAY CANDIDATES
-    # ==========================================================
-
-    print(
-        "\n--- Candidate Destinations ---"
-    )
-
-    print_json(
-        candidate_result
-    )
-
-    # ==========================================================
-    # 10. EXTRACT DESTINATIONS
-    # ==========================================================
-
-    candidates = extract_candidates(
-        candidate_result
-    )
-
-    if not candidates:
-
-        print(
-            "\nNo candidate destinations were returned."
+        candidates = extract_candidates(
+            candidate_result
         )
 
-        return
+        if not candidates:
 
-    print(
-        "\nDestinations selected for research:"
-    )
-
-    for candidate in candidates:
-
-        print(
-            f"• {candidate}"
-        )
-
-    # ==========================================================
-    # 11. MAPTILER
-    # ==========================================================
-
-    print_section(
-        "MAPPING DESTINATIONS"
-    )
-
-    print(
-        "\nGetting geographic information from MapTiler..."
-    )
-
-    try:
-
-        map_results = (
-            map_service.get_locations(
-                candidates
+            print(
+                "\nNo candidate destinations were returned."
             )
-        )
 
-    except Exception as error:
-
-        print(
-            "\nMapService failed."
-        )
+            return
 
         print(
-            f"Error: {error}"
+            "\nDestinations selected for research:"
         )
 
-        map_results = []
+        for destination in candidates:
 
-    # ==========================================================
-    # 12. DISPLAY MAP INFORMATION
-    # ==========================================================
+            print(
+                f"• {destination}"
+            )
 
-    print(
-        "\n--- Map Information ---"
-    )
+        # ------------------------------------------------------
+        # 9. MAP + RESEARCH
+        # ------------------------------------------------------
 
-    print_json(
-        map_results
-    )
+        (
+            research_result,
+            map_results
+        ) = gather_destination_information(
 
-    # ==========================================================
-    # 13. RESEARCH AGENT
-    # ==========================================================
+            candidates=candidates,
 
-    print_section(
-        "RESEARCHING DESTINATIONS"
-    )
-    valid_map_results = []
+            mood_preferences=mood_preferences,
 
-    for location in map_results:
+            budget=budget.get_status(),
 
-        if not isinstance(location, dict):
-            continue
+            research_agent=research_agent,
 
-        if not location.get("found", False):
-            continue
-
-        coordinates = location.get(
-            "coordinates",
-            {}
+            map_service=map_service
         )
 
-        if not isinstance(coordinates, dict):
-            continue
+        # ------------------------------------------------------
+        # 10. FINAL GEMINI COMPARISON
+        # ------------------------------------------------------
 
-        if coordinates.get("latitude") is None:
-            continue
-
-        if coordinates.get("longitude") is None:
-            continue
-
-        valid_map_results.append(location)
-
-    try:
-
-        research_result = research_agent.research(
-            destinations=candidates,
-            preferences=mood_preferences,
-            budget=budget_state,
-            map_data=map_results
+        print_section(
+            "GENERATING TRAVEL OPTIONS"
         )
 
-    except Exception as error:
+        try:
 
-        print(
-            "\nResearchAgent failed."
-        )
-
-        print(
-            f"Error: {error}"
-        )
-
-        return
-
-    # ==========================================================
-    # 14. DISPLAY RESEARCH
-    # ==========================================================
-
-    print(
-        "\n--- Research Information ---"
-    )
-
-    print_json(
-        research_result
-    )
-
-    # ==========================================================
-    # 15. FINAL GEMINI PASS
-    # ==========================================================
-
-    print_section(
-        "GENERATING FINAL TRAVEL OPTIONS"
-    )
-
-    try:
-
-        final_response = (
-            travel_agent.ask(
+            final_response = travel_agent.ask(
 
                 user_input=user_input,
 
@@ -1171,35 +1437,11 @@ def main():
 
                 trip_information=trip_information
             )
-        )
-
-    except TypeError:
-
-        # ------------------------------------------------------
-        # Compatibility fallback for current TravelAgent.
-        # ------------------------------------------------------
-
-        try:
-
-            final_response = (
-                travel_agent.ask(
-
-                    user_input=user_input,
-
-                    preferences=mood_preferences,
-
-                    budget=budget.get_status(),
-
-                    research=research_result,
-
-                    map_data=map_results
-                )
-            )
 
         except Exception as error:
 
             print(
-                "\nFinal TravelAgent failed."
+                "\nTravelAgent final planning failed."
             )
 
             print(
@@ -1208,98 +1450,463 @@ def main():
 
             return
 
-    except Exception as error:
+        # ------------------------------------------------------
+        # 11. DISPLAY OPTIONS
+        # ------------------------------------------------------
 
-        print(
-            "\nFinal TravelAgent failed."
+        display_final_options(
+            final_response
+        )
+
+        # ------------------------------------------------------
+        # 12. USER DECIDES WHAT TO DO
+        # ------------------------------------------------------
+
+        print_section(
+            "WHAT WOULD YOU LIKE TO DO?"
         )
 
         print(
-            f"Error: {error}"
+            "1. Select one of these trips"
         )
 
-        return
+        print(
+            "2. Change my requirements"
+        )
 
-    # ==========================================================
-    # 16. DISPLAY FINAL OPTIONS
-    # ==========================================================
+        print(
+            "3. Show the options again"
+        )
 
-    print_section(
-        "TRAVEL OPTIONS"
-    )
+        print(
+            "4. Exit"
+        )
 
-    print(
-        final_response
-    )
+        while True:
 
-    # ==========================================================
-    # 17. USER DECISION
-    # ==========================================================
+            choice = input(
+                "\n> "
+            ).strip()
 
-    print_section(
-        "WHAT WOULD YOU LIKE TO DO?"
-    )
+            if choice in {
+                "1",
+                "2",
+                "3",
+                "4"
+            }:
 
-    print(
-        "1. Continue with these options"
-    )
-
-    print(
-        "2. Change something about the trip"
-    )
-
-    print(
-        "3. Exit"
-    )
-
-    while True:
-
-        choice = input(
-            "\n> "
-        ).strip()
-
-        if choice == "1":
+                break
 
             print(
-                "\nYour current travel options have been kept."
+                "Please choose 1, 2, 3, or 4."
             )
 
-            break
+        # ======================================================
+        # OPTION 4 — EXIT
+        # ======================================================
 
-        elif choice == "2":
+        if choice == "4":
+
+            budget.clear_estimates()
 
             print(
-                "\nTrip modification mode will be "
-                "connected to the refinement workflow next."
+                "\nNo trip was committed."
             )
 
-            break
-
-        elif choice == "3":
-
             print(
-                "\nTravel planning ended."
+                "Thank you for using AI Travel Planner."
             )
 
             return
 
-        else:
+        # ======================================================
+        # OPTION 3 — SHOW AGAIN
+        # ======================================================
 
-            print(
-                "Please choose 1, 2, or 3."
+        if choice == "3":
+
+            continue
+
+        # ======================================================
+        # OPTION 2 — CHANGE REQUIREMENTS
+        # ======================================================
+
+        if choice == "2":
+
+            print_section(
+                "CHANGE TRIP REQUIREMENTS"
             )
 
-    # ==========================================================
-    # 18. CURRENT BUDGET
-    # ==========================================================
+            change_request = ask_required(
+                "\nWhat would you like to change?\n> "
+            )
 
-    print_section(
-        "CURRENT BUDGET"
-    )
+            # --------------------------------------------------
+            # Combine the original request with the change.
+            #
+            # The next MoodAgent / TravelAgent pass receives
+            # the complete updated request.
+            # --------------------------------------------------
 
-    print_json(
-        budget.get_status()
-    )
+            user_input = (
+                f"{user_input}\n\n"
+                f"USER REQUESTED CHANGE:\n"
+                f"{change_request}"
+            )
+
+            # --------------------------------------------------
+            # Discard temporary budget estimates.
+            # --------------------------------------------------
+
+            budget.clear_estimates()
+
+            print(
+                "\nPrevious temporary trip estimates "
+                "have been discarded."
+            )
+
+            continue
+
+        # ======================================================
+        # OPTION 1 — SELECT DESTINATION
+        # ======================================================
+
+        selected_index = select_destination(
+            candidates
+        )
+
+        # ------------------------------------------------------
+        # User selected "go back".
+        # ------------------------------------------------------
+
+        if selected_index is None:
+
+            print_section(
+                "CHANGE TRIP REQUIREMENTS"
+            )
+
+            change_request = ask_required(
+                "\nWhat would you like to change?\n> "
+            )
+
+            user_input = (
+                f"{user_input}\n\n"
+                f"USER REQUESTED CHANGE:\n"
+                f"{change_request}"
+            )
+
+            budget.clear_estimates()
+
+            continue
+
+        selected_destination = candidates[
+            selected_index
+        ]
+
+        print(
+            f"\nYou selected:"
+            f"\n{selected_destination}"
+        )
+
+        # ======================================================
+        # 13. BUILD SELECTED TRIP
+        # ======================================================
+
+        print_section(
+            "BUILDING SELECTED TRIP"
+        )
+
+        print(
+            "\nCalculating the selected trip..."
+        )
+
+        try:
+
+            selected_trip = (
+                travel_agent.build_selected_trip(
+
+                    selected_destination=
+                        selected_destination,
+
+                    user_input=
+                        user_input,
+
+                    preferences=
+                        mood_preferences,
+
+                    budget=
+                        budget.get_status(),
+
+                    research=
+                        research_result,
+
+                    map_data=
+                        map_results,
+
+                    trip_information=
+                        trip_information
+                )
+            )
+
+        except Exception as error:
+
+            print(
+                "\nCould not build the selected trip."
+            )
+
+            print(
+                f"Error: {error}"
+            )
+
+            budget.clear_estimates()
+
+            continue
+
+        # ======================================================
+        # 14. TEMPORARY BUDGET ESTIMATE
+        # ======================================================
+
+        estimate_created = display_selected_trip(
+            selected_trip=selected_trip,
+
+            budget=budget
+        )
+
+        if not estimate_created:
+
+            budget.clear_estimates()
+
+            continue
+
+        # ======================================================
+        # 15. CONFIRM / CHANGE / ANOTHER / CANCEL
+        # ======================================================
+
+        action = confirm_trip(
+            budget
+        )
+
+        # ======================================================
+        # CONFIRMED
+        # ======================================================
+
+        if action == "confirmed":
+
+            print_section(
+                "TRIP CONFIRMED"
+            )
+
+            print(
+                f"\n✓ {selected_destination}"
+            )
+
+            print(
+                "\nThe estimated trip costs have "
+                "been committed to your budget."
+            )
+
+            print(
+                "\n--- Updated Budget ---"
+            )
+
+            print_json(
+                budget.get_status()
+            )
+
+            print(
+                "\nYour trip planning session is complete."
+            )
+
+            return
+
+        # ======================================================
+        # CHANGE SOMETHING
+        # ======================================================
+
+        if action == "change":
+
+            print_section(
+                "CHANGE SELECTED TRIP"
+            )
+
+            change_request = ask_required(
+                "\nWhat would you like to change?\n> "
+            )
+
+            user_input = (
+                f"{user_input}\n\n"
+                f"USER REQUESTED CHANGE:\n"
+                f"{change_request}"
+            )
+
+            # --------------------------------------------------
+            # Discard temporary estimate.
+            # --------------------------------------------------
+
+            budget.clear_estimates()
+
+            continue
+
+        # ======================================================
+        # CHOOSE ANOTHER DESTINATION
+        # ======================================================
+
+        if action == "another":
+
+            budget.clear_estimates()
+
+            print(
+                "\nTemporary trip estimate discarded."
+            )
+
+            # --------------------------------------------------
+            # Go back to the already researched candidates.
+            #
+            # We do NOT need to call Gemini again.
+            # --------------------------------------------------
+
+            selected_index = select_destination(
+                candidates
+            )
+
+            if selected_index is None:
+
+                continue
+
+            selected_destination = candidates[
+                selected_index
+            ]
+
+            # --------------------------------------------------
+            # Build the newly selected trip.
+            # --------------------------------------------------
+
+            try:
+
+                selected_trip = (
+                    travel_agent.build_selected_trip(
+
+                        selected_destination=
+                            selected_destination,
+
+                        user_input=
+                            user_input,
+
+                        preferences=
+                            mood_preferences,
+
+                        budget=
+                            budget.get_status(),
+
+                        research=
+                            research_result,
+
+                        map_data=
+                            map_results,
+
+                        trip_information=
+                            trip_information
+                    )
+                )
+
+            except Exception as error:
+
+                print(
+                    "\nCould not build the selected trip."
+                )
+
+                print(
+                    f"Error: {error}"
+                )
+
+                budget.clear_estimates()
+
+                continue
+
+            estimate_created = display_selected_trip(
+                selected_trip=selected_trip,
+
+                budget=budget
+            )
+
+            if not estimate_created:
+
+                budget.clear_estimates()
+
+                continue
+
+            second_action = confirm_trip(
+                budget
+            )
+
+            if second_action == "confirmed":
+
+                print_section(
+                    "TRIP CONFIRMED"
+                )
+
+                print(
+                    f"\n✓ {selected_destination}"
+                )
+
+                print(
+                    "\nThe trip has been committed "
+                    "to the budget."
+                )
+
+                print(
+                    "\n--- Updated Budget ---"
+                )
+
+                print_json(
+                    budget.get_status()
+                )
+
+                return
+
+            if second_action == "change":
+
+                change_request = ask_required(
+                    "\nWhat would you like to change?\n> "
+                )
+
+                user_input = (
+                    f"{user_input}\n\n"
+                    f"USER REQUESTED CHANGE:\n"
+                    f"{change_request}"
+                )
+
+                budget.clear_estimates()
+
+                continue
+
+            budget.clear_estimates()
+
+            continue
+
+        # ======================================================
+        # CANCEL
+        # ======================================================
+
+        budget.clear_estimates()
+
+        print_section(
+            "TRIP CANCELLED"
+        )
+
+        print(
+            "\nNo temporary trip estimate was committed."
+        )
+
+        print(
+            "\n--- Current Budget ---"
+        )
+
+        print_json(
+            budget.get_status()
+        )
+
+        return
 
 
 # ==============================================================
@@ -1307,5 +1914,4 @@ def main():
 # ==============================================================
 
 if __name__ == "__main__":
-
     main()

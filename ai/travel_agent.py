@@ -9,46 +9,64 @@ class TravelAgent:
     """
     Main AI travel planning agent.
 
-    TravelAgent is the main reasoning system of the
-    travel planner and uses Gemini.
+    TravelAgent is responsible for reasoning and planning.
 
-    It operates in two major stages:
-
-        STAGE 1
-            User
-              ↓
-            main.py
-              ↓
-          TravelAgent
-              ↓
-            Gemini
-              ↓
-        Candidate Destinations
-
-        STAGE 2
-            main.py
-              ↓
-        MapService + ResearchAgent
-              ↓
-        main.py
-              ↓
-          TravelAgent
-              ↓
-            Gemini
-              ↓
-        Final Travel Recommendation
-
-    IMPORTANT:
-
-    TravelAgent does NOT directly communicate with:
+    It does NOT directly communicate with:
 
         - MoodAgent
-        - Budget
         - ResearchAgent
         - MapService
+        - Budget
 
     main.py is the communication/controller layer.
+
+    ==========================================================
+    WORKFLOW
+    ==========================================================
+
+        main.py
+           |
+           v
+        find_candidates()
+           |
+           v
+        Candidate Destinations
+           |
+           +----------------------+
+           |                      |
+           v                      v
+       ResearchAgent          MapService
+           |                      |
+           +----------+-----------+
+                      |
+                      v
+                   main.py
+                      |
+                      v
+                    ask()
+                      |
+                      v
+              Final Trip Options
+                      |
+                      v
+                User Selection
+                      |
+                      v
+            build_selected_trip()
+                      |
+                      v
+              Detailed Trip Plan
+                      |
+                      v
+                   main.py
+                      |
+                      v
+                   Budget
     """
+
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def __init__(self):
 
@@ -75,7 +93,6 @@ class TravelAgent:
     # FIND CANDIDATE DESTINATIONS
     # ==========================================================
 
-
     def find_candidates(
         self,
         user_input,
@@ -84,15 +101,18 @@ class TravelAgent:
         trip_information=None
     ):
         """
-        Ask Gemini to select a small list of candidate
-        destinations.
+        FIRST GEMINI STAGE.
 
-        This is the FIRST Gemini planning pass.
+        Select a small number of destinations that
+        should be researched.
 
-        It does NOT perform final trip planning.
+        This method does NOT:
 
-        It only determines which destinations should be
-        passed to MapService and ResearchAgent.
+            - select the final destination
+            - search hotels
+            - search flights
+            - calculate final trip costs
+            - create an itinerary
 
         Returns:
 
@@ -107,36 +127,55 @@ class TravelAgent:
             }
         """
 
-        # ==========================================================
-        # VALIDATION
-        # ==========================================================
+        # ------------------------------------------------------
+        # Validation
+        # ------------------------------------------------------
 
-        if not isinstance(user_input, str):
+        if not isinstance(
+            user_input,
+            str
+        ):
             raise TypeError(
                 "user_input must be a string."
             )
 
-        if not isinstance(preferences, dict):
+        if not user_input.strip():
+
+            raise ValueError(
+                "user_input cannot be empty."
+            )
+
+        if not isinstance(
+            preferences,
+            dict
+        ):
             raise TypeError(
                 "preferences must be a dictionary."
             )
 
-        if not isinstance(budget, dict):
+        if not isinstance(
+            budget,
+            dict
+        ):
             raise TypeError(
                 "budget must be a dictionary."
             )
 
         if trip_information is None:
+
             trip_information = {}
 
-        if not isinstance(trip_information, dict):
+        if not isinstance(
+            trip_information,
+            dict
+        ):
             raise TypeError(
                 "trip_information must be a dictionary."
             )
 
-        # ==========================================================
-        # JSON DATA
-        # ==========================================================
+        # ------------------------------------------------------
+        # JSON
+        # ------------------------------------------------------
 
         preferences_json = json.dumps(
             preferences,
@@ -153,163 +192,136 @@ class TravelAgent:
             indent=4
         )
 
-        # ==========================================================
-        # GEMINI PROMPT
-        # ==========================================================
+        # ------------------------------------------------------
+        # Prompt
+        # ------------------------------------------------------
 
         prompt = f"""
-    You are the destination-selection component of an
-    AI travel planning system.
+You are the destination-selection component of an
+AI travel planning system.
 
-    Your ONLY job in this request is to select a SMALL list
-    of suitable candidate destinations.
+Your ONLY task is to select a SMALL number of candidate
+destinations that should be researched.
 
-    You are NOT creating the final itinerary.
+You are NOT creating the final trip.
 
-    You are NOT researching hotels.
+You are NOT creating an itinerary.
 
-    You are NOT researching flights.
+You are NOT calculating exact travel costs.
 
-    You are NOT calculating exact prices.
+You are NOT pretending to perform live searches.
 
-    You are NOT creating a complete travel plan.
+Your output will be passed to separate mapping and
+research systems.
 
-    Your output will be passed to:
+------------------------------------------------------------
+ORIGINAL USER REQUEST
+------------------------------------------------------------
 
-        main.py
-            ↓
-        MapService
-            ↓
-        ResearchAgent
-            ↓
-        TravelAgent
+{user_input}
 
-    ------------------------------------------------------------
-    ORIGINAL USER REQUEST
-    ------------------------------------------------------------
+------------------------------------------------------------
+BASIC TRIP INFORMATION
+------------------------------------------------------------
 
-    {user_input}
+{trip_information_json}
 
-    ------------------------------------------------------------
-    BASIC TRIP INFORMATION
-    ------------------------------------------------------------
+------------------------------------------------------------
+TRAVEL PREFERENCE PROFILE
+------------------------------------------------------------
 
-    {trip_information_json}
+{preferences_json}
 
-    ------------------------------------------------------------
-    TRAVEL PREFERENCE PROFILE
-    ------------------------------------------------------------
+------------------------------------------------------------
+CURRENT BUDGET
+------------------------------------------------------------
 
-    {preferences_json}
+{budget_json}
 
-    ------------------------------------------------------------
-    CURRENT BUDGET
-    ------------------------------------------------------------
+------------------------------------------------------------
+IMPORTANT
+------------------------------------------------------------
 
-    {budget_json}
+The original user request is the ultimate source of truth.
 
-    ------------------------------------------------------------
-    IMPORTANT RULES
-    ------------------------------------------------------------
+Use the structured preference profile as supporting
+information.
 
-    The original user request is the ultimate source of truth.
+Respect hard trip constraints.
 
-    Respect the basic trip constraints.
+Pay attention to:
 
-    Pay attention to:
+- departure location
+- trip scope
+- country
+- travelers
+- duration
+- travel dates
+- maximum travel time
+- maximum distance
+- transportation
+- accommodation
+- safety
+- additional requirements
+- wanted preferences
+- avoided preferences
+- budget
 
-    - departure location
-    - country
-    - domestic/international scope
-    - number of travelers
-    - trip duration
-    - travel dates
-    - maximum travel time
-    - maximum distance
-    - transportation preference
-    - accommodation preference
-    - safety requirements
-    - other requirements
+Do not recommend destinations that obviously violate
+hard constraints.
 
-    Also consider:
+Select between 3 and 5 candidates.
 
-    - wanted moods
-    - avoided moods
-    - mood scores
-    - budget
+Do not return more than 5.
 
-    Do not recommend destinations that obviously violate
-    the user's hard constraints.
+The candidates should be meaningfully different when
+appropriate.
 
-    Select approximately 3 to 5 candidate destinations.
+Do not invent current prices.
 
-    The candidates should be meaningfully different when
-    appropriate.
+Do not claim live hotel availability.
 
-    Do not return more than 5 candidates.
+Do not claim live flight availability.
 
-    ------------------------------------------------------------
-    OUTPUT REQUIREMENT
-    ------------------------------------------------------------
+Do not create a final itinerary.
 
-    YOU MUST RETURN ONLY VALID JSON.
+------------------------------------------------------------
+OUTPUT
+------------------------------------------------------------
 
-    DO NOT use Markdown.
+Return ONLY valid JSON.
 
-    DO NOT use ```json.
+Do not use Markdown.
 
-    DO NOT write an explanation before the JSON.
+Do not use ```json.
 
-    DO NOT write an explanation after the JSON.
+Use EXACTLY:
 
-    The response MUST begin with:
+{{
+    "candidates": [
+        {{
+            "name": "Destination name",
+            "country": "Country",
+            "reason": "Why this destination should be researched."
+        }}
+    ]
+}}
 
-    {{
+Every candidate must contain:
 
-    and MUST end with:
+    name
+    country
+    reason
+"""
 
-    }}
-
-    Use EXACTLY this structure:
-
-    {{
-        "candidates": [
-            {{
-                "name": "Destination name",
-                "country": "Country name",
-                "reason": "Short explanation of why this destination is a candidate."
-            }}
-        ]
-    }}
-
-    Every candidate MUST contain:
-
-        name
-        country
-        reason
-
-    The "candidates" array must contain between 3 and 5
-    destinations.
-
-    Do not include any additional top-level fields.
-
-    Do not include markdown.
-
-    Return ONLY the JSON object.
-    """
-
-        # ==========================================================
-        # GEMINI REQUEST
-        # ==========================================================
+        # ------------------------------------------------------
+        # Gemini
+        # ------------------------------------------------------
 
         response = self.client.interactions.create(
             model=self.model,
             input=prompt
         )
-
-        # ==========================================================
-        # EXTRACT TEXT
-        # ==========================================================
 
         content = getattr(
             response,
@@ -323,11 +335,989 @@ class TravelAgent:
                 "Gemini returned an empty candidate response."
             )
 
+        result = self._parse_json_object(
+            content,
+            "candidate destinations"
+        )
+
+        # ------------------------------------------------------
+        # Validate candidates
+        # ------------------------------------------------------
+
+        candidates = result.get(
+            "candidates"
+        )
+
+        if not isinstance(
+            candidates,
+            list
+        ):
+            raise ValueError(
+                "Gemini candidate response is missing "
+                "a valid 'candidates' list."
+            )
+
+        cleaned = []
+
+        seen = set()
+
+        for candidate in candidates:
+
+            if not isinstance(
+                candidate,
+                dict
+            ):
+                continue
+
+            name = candidate.get(
+                "name"
+            )
+
+            country = candidate.get(
+                "country"
+            )
+
+            reason = candidate.get(
+                "reason",
+                ""
+            )
+
+            if not isinstance(
+                name,
+                str
+            ):
+                continue
+
+            if not isinstance(
+                country,
+                str
+            ):
+                continue
+
+            name = name.strip()
+            country = country.strip()
+
+            if not name:
+                continue
+
+            key = (
+                name.lower(),
+                country.lower()
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(
+                key
+            )
+
+            cleaned.append(
+                {
+                    "name": name,
+
+                    "country": country,
+
+                    "reason": str(
+                        reason
+                    ).strip()
+                }
+            )
+
+        if not cleaned:
+
+            raise ValueError(
+                "Gemini did not return any valid "
+                "candidate destinations."
+            )
+
+        return {
+            "candidates": cleaned[:5]
+        }
+
+    # ==========================================================
+    # FINAL DESTINATION COMPARISON
+    # ==========================================================
+
+    def ask(
+        self,
+        user_input,
+        preferences,
+        budget,
+        research=None,
+        map_data=None,
+        trip_information=None
+    ):
+        """
+        SECOND GEMINI STAGE.
+
+        Combine:
+
+            - original user request
+            - trip information
+            - MoodAgent
+            - budget
+            - ResearchAgent
+            - MapService
+
+        and produce the final set of travel options.
+
+        This is the information the user will review
+        before selecting a trip.
+
+        This method does NOT commit budget expenses.
+        """
+
+        # ------------------------------------------------------
+        # Defaults
+        # ------------------------------------------------------
+
+        if research is None:
+            research = {}
+
+        if map_data is None:
+            map_data = []
+
+        if trip_information is None:
+            trip_information = {}
+
+        # ------------------------------------------------------
+        # Validation
+        # ------------------------------------------------------
+
+        if not isinstance(
+            user_input,
+            str
+        ):
+            raise TypeError(
+                "user_input must be a string."
+            )
+
+        if not isinstance(
+            preferences,
+            dict
+        ):
+            raise TypeError(
+                "preferences must be a dictionary."
+            )
+
+        if not isinstance(
+            budget,
+            dict
+        ):
+            raise TypeError(
+                "budget must be a dictionary."
+            )
+
+        if not isinstance(
+            research,
+            dict
+        ):
+            raise TypeError(
+                "research must be a dictionary."
+            )
+
+        if not isinstance(
+            map_data,
+            list
+        ):
+            raise TypeError(
+                "map_data must be a list."
+            )
+
+        if not isinstance(
+            trip_information,
+            dict
+        ):
+            raise TypeError(
+                "trip_information must be a dictionary."
+            )
+
+        # ------------------------------------------------------
+        # Convert to JSON
+        # ------------------------------------------------------
+
+        user_json = json.dumps(
+            user_input,
+            indent=4
+        )
+
+        preferences_json = json.dumps(
+            preferences,
+            indent=4
+        )
+
+        budget_json = json.dumps(
+            budget,
+            indent=4
+        )
+
+        research_json = json.dumps(
+            research,
+            indent=4
+        )
+
+        map_json = json.dumps(
+            map_data,
+            indent=4
+        )
+
+        trip_information_json = json.dumps(
+            trip_information,
+            indent=4
+        )
+
+        # ------------------------------------------------------
+        # Prompt
+        # ------------------------------------------------------
+
+        prompt = f"""
+You are the main AI travel planning agent.
+
+You are performing the final comparison stage.
+
+The application has already:
+
+1. Collected basic trip information.
+2. Interpreted the user's preferences.
+3. Generated candidate destinations.
+4. Obtained geographic information.
+5. Obtained destination research.
+
+Your job is to compare the researched destinations
+and present the best travel options to the user.
+
+The user will later select one of these options.
+
+------------------------------------------------------------
+ORIGINAL USER REQUEST
+------------------------------------------------------------
+
+{user_json}
+
+------------------------------------------------------------
+BASIC TRIP INFORMATION
+------------------------------------------------------------
+
+{trip_information_json}
+
+------------------------------------------------------------
+TRAVEL PREFERENCE PROFILE
+------------------------------------------------------------
+
+{preferences_json}
+
+------------------------------------------------------------
+CURRENT BUDGET
+------------------------------------------------------------
+
+{budget_json}
+
+------------------------------------------------------------
+MAP INFORMATION
+------------------------------------------------------------
+
+{map_json}
+
+------------------------------------------------------------
+RESEARCH INFORMATION
+------------------------------------------------------------
+
+{research_json}
+
+------------------------------------------------------------
+REASONING RULES
+------------------------------------------------------------
+
+The original user request is the ultimate source
+of truth.
+
+Use the MoodAgent profile as supporting information.
+
+Positive scores indicate desired characteristics.
+
+Negative scores indicate characteristics the user
+wants to avoid.
+
+Respect hard constraints.
+
+Consider:
+
+- destination suitability
+- natural environment
+- urban environment
+- crowds
+- relaxation
+- activities
+- travel effort
+- accessibility
+- transportation
+- geographic position
+- budget suitability
+
+Do not invent information that is missing.
+
+Do not invent current prices.
+
+Do not claim a hotel is currently available.
+
+Do not claim a flight is currently available.
+
+Do not claim that anything has been booked.
+
+Do not modify the budget.
+
+The budget system is responsible for actual
+financial state.
+
+------------------------------------------------------------
+OUTPUT
+------------------------------------------------------------
+
+Present the strongest travel options clearly.
+
+For each option explain:
+
+- destination
+- country
+- why it matches
+- important desired characteristics
+- possible conflicts with avoided preferences
+- travel effort
+- geographic information
+- budget considerations
+- advantages
+- limitations
+
+If there is a clear strongest option, identify it.
+
+However, do NOT commit to the trip.
+
+The user must choose.
+
+The final response is intended to help the user
+select one destination.
+"""
+
+        response = self.client.interactions.create(
+            model=self.model,
+            input=prompt
+        )
+
+        content = getattr(
+            response,
+            "output_text",
+            None
+        )
+
+        if not content:
+
+            raise ValueError(
+                "Gemini returned an empty final response."
+            )
+
+        return content.strip()
+
+    # ==========================================================
+    # BUILD SELECTED TRIP
+    # ==========================================================
+
+    def build_selected_trip(
+        self,
+        selected_destination,
+        user_input,
+        preferences,
+        budget,
+        research=None,
+        map_data=None,
+        trip_information=None
+    ):
+        """
+        THIRD GEMINI STAGE.
+
+        Build the detailed structure for ONE destination
+        selected by the user.
+
+        This happens AFTER the user chooses a destination.
+
+        The output is intended to be passed back to main.py,
+        which can then place the returned costs into the
+        Budget's temporary estimate system.
+
+        IMPORTANT:
+
+        This method does NOT directly modify Budget.
+
+        It does NOT book anything.
+
+        It does NOT claim that estimated prices are
+        guaranteed.
+
+        Cost values should only be included when supported
+        by supplied MapService / research information.
+
+        Unknown costs must be represented as null rather
+        than invented.
+
+        Expected output:
+
+            {
+                "destination": "...",
+
+                "costs": [
+                    {
+                        "category": "transportation",
+                        "amount": 0,
+                        "description": "..."
+                    }
+                ],
+
+                "total_estimated_cost": 0,
+
+                "within_budget": true,
+
+                "notes": []
+            }
+        """
+
+        # ------------------------------------------------------
+        # Defaults
+        # ------------------------------------------------------
+
+        if research is None:
+            research = {}
+
+        if map_data is None:
+            map_data = []
+
+        if trip_information is None:
+            trip_information = {}
+
+        # ------------------------------------------------------
+        # Validation
+        # ------------------------------------------------------
+
+        if not isinstance(
+            selected_destination,
+            str
+        ):
+            raise TypeError(
+                "selected_destination must be a string."
+            )
+
+        if not selected_destination.strip():
+
+            raise ValueError(
+                "selected_destination cannot be empty."
+            )
+
+        if not isinstance(
+            user_input,
+            str
+        ):
+            raise TypeError(
+                "user_input must be a string."
+            )
+
+        if not isinstance(
+            preferences,
+            dict
+        ):
+            raise TypeError(
+                "preferences must be a dictionary."
+            )
+
+        if not isinstance(
+            budget,
+            dict
+        ):
+            raise TypeError(
+                "budget must be a dictionary."
+            )
+
+        if not isinstance(
+            research,
+            dict
+        ):
+            raise TypeError(
+                "research must be a dictionary."
+            )
+
+        if not isinstance(
+            map_data,
+            list
+        ):
+            raise TypeError(
+                "map_data must be a list."
+            )
+
+        if not isinstance(
+            trip_information,
+            dict
+        ):
+            raise TypeError(
+                "trip_information must be a dictionary."
+            )
+
+        # ------------------------------------------------------
+        # JSON
+        # ------------------------------------------------------
+
+        budget_json = json.dumps(
+            budget,
+            indent=4
+        )
+
+        preferences_json = json.dumps(
+            preferences,
+            indent=4
+        )
+
+        research_json = json.dumps(
+            research,
+            indent=4
+        )
+
+        map_json = json.dumps(
+            map_data,
+            indent=4
+        )
+
+        trip_information_json = json.dumps(
+            trip_information,
+            indent=4
+        )
+
+        # ======================================================
+        # SELECTED TRIP PROMPT
+        # ======================================================
+
+        prompt = f"""
+You are the final trip-construction component of an
+AI travel planning system.
+
+The user has selected ONE destination.
+
+Your task is to construct a detailed estimated trip
+cost structure for that destination using ONLY the
+information supplied to you.
+
+------------------------------------------------------------
+SELECTED DESTINATION
+------------------------------------------------------------
+
+{selected_destination}
+
+------------------------------------------------------------
+ORIGINAL USER REQUEST
+------------------------------------------------------------
+
+{user_input}
+
+------------------------------------------------------------
+BASIC TRIP INFORMATION
+------------------------------------------------------------
+
+{trip_information_json}
+
+------------------------------------------------------------
+TRAVEL PREFERENCES
+------------------------------------------------------------
+
+{preferences_json}
+
+------------------------------------------------------------
+CURRENT BUDGET
+------------------------------------------------------------
+
+{budget_json}
+
+------------------------------------------------------------
+MAP / LOCATION DATA
+------------------------------------------------------------
+
+{map_json}
+
+------------------------------------------------------------
+RESEARCH DATA
+------------------------------------------------------------
+
+{research_json}
+
+------------------------------------------------------------
+IMPORTANT COST RULES
+------------------------------------------------------------
+
+The application needs an estimated financial
+breakdown before the user commits to the trip.
+
+Possible categories include:
+
+- transportation
+- accommodation
+- food
+- activities
+- local transportation
+- other
+
+IMPORTANT:
+
+Do NOT invent precise current prices.
+
+Only use monetary values that are explicitly supplied
+in the provided information.
+
+If a cost is unknown, use:
+
+    null
+
+rather than guessing.
+
+Do not claim a booking has occurred.
+
+Do not claim that a price is guaranteed.
+
+Do not claim real-time availability unless it is
+explicitly provided in the input data.
+
+If the available information is insufficient to
+calculate the complete trip cost, clearly identify
+which costs are unknown.
+
+------------------------------------------------------------
+BUDGET
+------------------------------------------------------------
+
+The current remaining budget is provided above.
+
+Compare the estimated known total against the
+remaining budget.
+
+The Budget class will perform the actual affordability
+check.
+
+Do not modify the budget yourself.
+
+------------------------------------------------------------
+OUTPUT
+------------------------------------------------------------
+
+Return ONLY valid JSON.
+
+Use exactly:
+
+{{
+    "destination": "Selected destination",
+
+    "costs": [
+        {{
+            "category": "transportation",
+            "amount": 0,
+            "description": "Description"
+        }}
+    ],
+
+    "total_estimated_cost": 0,
+
+    "unknown_costs": [],
+
+    "within_budget": true,
+
+    "notes": []
+}}
+
+Rules:
+
+- "costs" must be an array.
+- "amount" must be a number or null.
+- Unknown costs must NOT be guessed.
+- "total_estimated_cost" should only include known
+  monetary amounts.
+- "unknown_costs" should identify missing categories.
+- "within_budget" should be based only on known costs.
+- Do not include Markdown.
+- Do not include explanatory text outside JSON.
+"""
+
+        response = self.client.interactions.create(
+            model=self.model,
+            input=prompt
+        )
+
+        content = getattr(
+            response,
+            "output_text",
+            None
+        )
+
+        if not content:
+
+            raise ValueError(
+                "Gemini returned an empty selected-trip response."
+            )
+
+        result = self._parse_json_object(
+            content,
+            "selected trip"
+        )
+
+        # ------------------------------------------------------
+        # Basic validation
+        # ------------------------------------------------------
+
+        if not isinstance(
+            result,
+            dict
+        ):
+            raise ValueError(
+                "Selected trip response must be a JSON object."
+            )
+
+        destination = result.get(
+            "destination"
+        )
+
+        costs = result.get(
+            "costs"
+        )
+
+        if not isinstance(
+            destination,
+            str
+        ):
+            raise ValueError(
+                "Selected trip response is missing "
+                "a valid destination."
+            )
+
+        if not isinstance(
+            costs,
+            list
+        ):
+            raise ValueError(
+                "Selected trip response is missing "
+                "a valid costs list."
+            )
+
+        cleaned_costs = []
+
+        for cost in costs:
+
+            if not isinstance(
+                cost,
+                dict
+            ):
+                continue
+
+            category = str(
+                cost.get(
+                    "category",
+                    "other"
+                )
+            ).strip()
+
+            description = str(
+                cost.get(
+                    "description",
+                    ""
+                )
+            ).strip()
+
+            amount = cost.get(
+                "amount"
+            )
+
+            # --------------------------------------------------
+            # Unknown costs are allowed.
+            # --------------------------------------------------
+
+            if amount is None:
+
+                cleaned_costs.append(
+                    {
+                        "category": category,
+
+                        "amount": None,
+
+                        "description": description
+                    }
+                )
+
+                continue
+
+            # --------------------------------------------------
+            # Validate known amount.
+            # --------------------------------------------------
+
+            try:
+
+                amount = round(
+                    float(amount),
+                    2
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                continue
+
+            if amount < 0:
+                continue
+
+            cleaned_costs.append(
+                {
+                    "category": category,
+
+                    "amount": amount,
+
+                    "description": description
+                }
+            )
+
+        # ------------------------------------------------------
+        # Recalculate known total ourselves.
+        #
+        # This prevents Gemini from accidentally returning
+        # a total that does not match its own cost list.
+        # ------------------------------------------------------
+
+        known_total = 0.0
+
+        for cost in cleaned_costs:
+
+            if cost["amount"] is not None:
+
+                known_total += cost["amount"]
+
+        known_total = round(
+            known_total,
+            2
+        )
+
+        # ------------------------------------------------------
+        # Unknown costs
+        # ------------------------------------------------------
+
+        unknown_costs = result.get(
+            "unknown_costs",
+            []
+        )
+
+        if not isinstance(
+            unknown_costs,
+            list
+        ):
+            unknown_costs = []
+
+        unknown_costs = [
+            str(item).strip()
+            for item in unknown_costs
+            if str(item).strip()
+        ]
+
+        # ------------------------------------------------------
+        # Notes
+        # ------------------------------------------------------
+
+        notes = result.get(
+            "notes",
+            []
+        )
+
+        if not isinstance(
+            notes,
+            list
+        ):
+            notes = []
+
+        notes = [
+            str(item).strip()
+            for item in notes
+            if str(item).strip()
+        ]
+
+        # ------------------------------------------------------
+        # Determine affordability using the supplied budget.
+        #
+        # Gemini does not get to override the actual
+        # affordability calculation.
+        # ------------------------------------------------------
+
+        try:
+
+            remaining_budget = float(
+                budget.get(
+                    "remaining",
+                    0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            remaining_budget = 0.0
+
+        within_budget = (
+            known_total <= remaining_budget
+        )
+
+        # ------------------------------------------------------
+        # Final structured result
+        # ------------------------------------------------------
+
+        return {
+            "destination": destination.strip(),
+
+            "costs": cleaned_costs,
+
+            "total_estimated_cost": known_total,
+
+            "unknown_costs": unknown_costs,
+
+            "within_budget": within_budget,
+
+            "notes": notes
+        }
+
+    # ==========================================================
+    # JSON PARSER
+    # ==========================================================
+
+    @staticmethod
+    def _parse_json_object(
+        content,
+        description="response"
+    ):
+        """
+        Safely parse a Gemini JSON response.
+
+        Handles common Markdown wrappers such as:
+
+            ```json
+            {...}
+            ```
+
+        and also extracts the outer JSON object
+        if Gemini adds accidental surrounding text.
+        """
+
+        if not isinstance(
+            content,
+            str
+        ):
+            raise ValueError(
+                f"Gemini returned an invalid {description}."
+            )
+
         content = content.strip()
 
-        # ==========================================================
-        # CLEAN COMMON MARKDOWN WRAPPERS
-        # ==========================================================
+        # ------------------------------------------------------
+        # Remove Markdown fences.
+        # ------------------------------------------------------
 
         if content.startswith(
             "```json"
@@ -353,9 +1343,9 @@ class TravelAgent:
                 :-3
             ].strip()
 
-        # ==========================================================
-        # FIND JSON OBJECT
-        # ==========================================================
+        # ------------------------------------------------------
+        # Locate JSON object.
+        # ------------------------------------------------------
 
         start = content.find(
             "{"
@@ -368,17 +1358,13 @@ class TravelAgent:
         if start == -1 or end == -1:
 
             raise ValueError(
-                "Gemini did not return a JSON object "
-                "while generating candidate destinations."
+                f"Gemini did not return a JSON object "
+                f"while generating {description}."
             )
 
         json_text = content[
             start:end + 1
         ]
-
-        # ==========================================================
-        # PARSE JSON
-        # ==========================================================
 
         try:
 
@@ -389,13 +1375,9 @@ class TravelAgent:
         except json.JSONDecodeError as error:
 
             raise ValueError(
-                "Gemini returned invalid JSON while "
-                "generating candidate destinations."
+                f"Gemini returned invalid JSON while "
+                f"generating {description}."
             ) from error
-
-        # ==========================================================
-        # VALIDATE TOP LEVEL
-        # ==========================================================
 
         if not isinstance(
             result,
@@ -403,828 +1385,7 @@ class TravelAgent:
         ):
 
             raise ValueError(
-                "Gemini candidate response must be a JSON object."
+                f"Gemini {description} must be a JSON object."
             )
 
-        candidates = result.get(
-            "candidates"
-        )
-
-        if not isinstance(
-            candidates,
-            list
-        ):
-
-            raise ValueError(
-                "Gemini candidate response is missing "
-                "a valid 'candidates' list."
-            )
-
-        # ==========================================================
-        # VALIDATE CANDIDATES
-        # ==========================================================
-
-        cleaned_candidates = []
-
-        for candidate in candidates:
-
-            if not isinstance(
-                candidate,
-                dict
-            ):
-
-                continue
-
-            name = candidate.get(
-                "name"
-            )
-
-            country = candidate.get(
-                "country"
-            )
-
-            reason = candidate.get(
-                "reason",
-                ""
-            )
-
-            if not isinstance(
-                name,
-                str
-            ):
-
-                continue
-
-            if not isinstance(
-                country,
-                str
-            ):
-
-                continue
-
-            if not name.strip():
-
-                continue
-
-            cleaned_candidates.append(
-                {
-                    "name": name.strip(),
-
-                    "country": country.strip(),
-
-                    "reason": (
-                        str(reason).strip()
-                    )
-                }
-            )
-
-        # ==========================================================
-        # REMOVE DUPLICATES
-        # ==========================================================
-
-        unique_candidates = []
-
-        seen = set()
-
-        for candidate in cleaned_candidates:
-
-            key = (
-                candidate["name"].lower(),
-                candidate["country"].lower()
-            )
-
-            if key in seen:
-
-                continue
-
-            seen.add(
-                key
-            )
-
-            unique_candidates.append(
-                candidate
-            )
-
-        # ==========================================================
-        # FINAL VALIDATION
-        # ==========================================================
-
-        if not unique_candidates:
-
-            raise ValueError(
-                "Gemini did not return any valid "
-                "candidate destinations."
-            )
-
-        # ----------------------------------------------------------
-        # Keep the candidate list small.
-        # ----------------------------------------------------------
-
-        unique_candidates = (
-            unique_candidates[:5]
-        )
-
-        return {
-            "candidates": unique_candidates
-        }
-
-
-        # ======================================================
-        # CANDIDATE DESTINATION PROMPT
-        # ======================================================
-
-        prompt = f"""
-You are the main AI travel planning agent.
-
-Your job in this stage is to identify a SMALL number
-of suitable candidate travel destinations.
-
-You are NOT making the final travel decision yet.
-
-The candidate destinations will later be investigated
-by separate mapping and research systems.
-
-You have received:
-
-1. The ORIGINAL USER REQUEST.
-2. A structured TRAVEL PREFERENCE PROFILE created
-   by the MoodAgent.
-3. The CURRENT TRAVEL BUDGET maintained by the
-   application's Budget system.
-
-------------------------------------------------------------
-STRUCTURED TRAVEL PREFERENCE PROFILE
-------------------------------------------------------------
-
-The profile may contain:
-
-- wanted:
-  Canonical preferences the user wants.
-
-- avoid:
-  Canonical preferences the user wants to avoid.
-
-- scores:
-  Numerical importance of preferences.
-
-- score_details:
-  Additional scoring information.
-
-- summary:
-  Natural-language summary.
-
-- raw_wanted:
-  Original preference phrases.
-
-- raw_avoid:
-  Original rejected preference phrases.
-
-------------------------------------------------------------
-IMPORTANT INTERPRETATION RULE
-------------------------------------------------------------
-
-The ORIGINAL USER REQUEST is the ultimate source
-of truth.
-
-The structured preference profile is supporting
-information.
-
-If there is a disagreement between them:
-
-    carefully interpret the original user request.
-
-Do not blindly follow the structured profile.
-
-Positive mood scores represent desired characteristics.
-
-Negative mood scores represent characteristics
-the user wants to avoid.
-
-A negative preference is NOT something the user wants.
-
-Example:
-
-    crowded: -1.0
-
-means:
-
-    The user wants to avoid crowded environments.
-
-------------------------------------------------------------
-BUDGET
-------------------------------------------------------------
-
-The current budget is:
-
-{budget_json}
-
-Use the budget as a planning constraint.
-
-Prefer destinations that could reasonably fit within
-the available budget.
-
-Do NOT invent exact current prices.
-
-Do NOT claim that flights or hotels are currently
-available.
-
-Do NOT assume anything has already been purchased.
-
-------------------------------------------------------------
-ORIGINAL USER REQUEST
-------------------------------------------------------------
-
-{user_input}
-
-------------------------------------------------------------
-TRAVEL PREFERENCE PROFILE
-------------------------------------------------------------
-
-{preferences_json}
-
-------------------------------------------------------------
-CANDIDATE SELECTION
-------------------------------------------------------------
-
-Identify between 3 and 5 strong candidate destinations.
-
-Candidates should be selected based on:
-
-1. Original user request.
-2. Wanted preferences.
-3. Avoided preferences.
-4. Mood scores.
-5. Budget.
-6. Trip type.
-7. Travel experience requested by the user.
-
-Try to provide candidates that are meaningfully
-different when appropriate.
-
-For example, do not return five nearly identical
-destinations unless the user's request strongly
-requires that.
-
-------------------------------------------------------------
-IMPORTANT
-------------------------------------------------------------
-
-At this stage:
-
-DO NOT:
-
-- create a full itinerary
-- create a day-by-day plan
-- make a final winner
-- perform live web searches
-- claim current flight prices
-- claim current hotel prices
-- claim real-time availability
-- invent precise transportation costs
-
-The destinations will be researched separately.
-
-Return ONLY valid JSON.
-
-Use exactly this structure:
-
-{{
-    "candidates": [
-        {{
-            "name": "Destination name",
-            "country": "Country",
-            "reason": "Why this destination should be researched."
-        }}
-    ]
-}}
-"""
-
-        # ------------------------------------------------------
-        # Gemini request.
-        # ------------------------------------------------------
-
-        response = self.client.interactions.create(
-            model=self.model,
-            input=prompt
-        )
-
-        content = response.output_text
-
-        # ------------------------------------------------------
-        # Parse JSON.
-        # ------------------------------------------------------
-
-        try:
-
-            result = json.loads(
-                content
-            )
-
-        except json.JSONDecodeError as error:
-
-            raise ValueError(
-                "Gemini returned invalid JSON while "
-                "generating candidate destinations."
-            ) from error
-
-        # ------------------------------------------------------
-        # Validate response.
-        # ------------------------------------------------------
-
-        if not isinstance(
-            result,
-            dict
-        ):
-
-            raise ValueError(
-                "Gemini candidate response must "
-                "be a dictionary."
-            )
-
-        candidates = result.get(
-            "candidates"
-        )
-
-        if not isinstance(
-            candidates,
-            list
-        ):
-
-            raise ValueError(
-                "'candidates' must be a list."
-            )
-
-        if not candidates:
-
-            raise ValueError(
-                "Gemini returned an empty candidate list."
-            )
-
-        # ------------------------------------------------------
-        # Validate individual candidates.
-        # ------------------------------------------------------
-
-        cleaned_candidates = []
-
-        for index, candidate in enumerate(
-            candidates,
-            start=1
-        ):
-
-            if not isinstance(
-                candidate,
-                dict
-            ):
-
-                raise ValueError(
-                    f"Candidate {index} must be a dictionary."
-                )
-
-            name = candidate.get(
-                "name"
-            )
-
-            country = candidate.get(
-                "country"
-            )
-
-            reason = candidate.get(
-                "reason"
-            )
-
-            if not name:
-
-                raise ValueError(
-                    f"Candidate {index} is missing 'name'."
-                )
-
-            if not country:
-
-                raise ValueError(
-                    f"Candidate {index} is missing 'country'."
-                )
-
-            if not reason:
-
-                raise ValueError(
-                    f"Candidate {index} is missing 'reason'."
-                )
-
-            cleaned_candidates.append(
-                {
-                    "name": str(name).strip(),
-                    "country": str(country).strip(),
-                    "reason": str(reason).strip()
-                }
-            )
-
-        # ------------------------------------------------------
-        # Keep only a small candidate list.
-        # ------------------------------------------------------
-
-        cleaned_candidates = (
-            cleaned_candidates[:5]
-        )
-
-        return {
-            "candidates": cleaned_candidates
-        }
-
-    # ==========================================================
-    # FINAL TRAVEL PLANNING
-    # ==========================================================
-
-    def ask(
-        self,
-        user_input,
-        preferences,
-        budget,
-        research=None,
-        map_data=None
-    ):
-        """
-        Final Gemini travel-planning stage.
-
-        main.py provides:
-
-            1. Original user request
-            2. MoodAgent preferences
-            3. Current budget
-            4. ResearchAgent information
-            5. MapService information
-
-        TravelAgent uses all available information to
-        reason about the best travel options.
-
-        TravelAgent does NOT directly communicate with
-        any other system.
-        """
-
-        # ------------------------------------------------------
-        # Validate user input.
-        # ------------------------------------------------------
-
-        if not isinstance(
-            user_input,
-            str
-        ):
-
-            raise TypeError(
-                "user_input must be a string."
-            )
-
-        if not user_input.strip():
-
-            raise ValueError(
-                "user_input cannot be empty."
-            )
-
-        # ------------------------------------------------------
-        # Validate preferences.
-        # ------------------------------------------------------
-
-        if not isinstance(
-            preferences,
-            dict
-        ):
-
-            raise TypeError(
-                "preferences must be a dictionary."
-            )
-
-        # ------------------------------------------------------
-        # Validate budget.
-        # ------------------------------------------------------
-
-        if not isinstance(
-            budget,
-            dict
-        ):
-
-            raise TypeError(
-                "budget must be a dictionary."
-            )
-
-        # ------------------------------------------------------
-        # Validate research.
-        # ------------------------------------------------------
-
-        if research is None:
-
-            research = {}
-
-        if not isinstance(
-            research,
-            dict
-        ):
-
-            raise TypeError(
-                "research must be a dictionary."
-            )
-
-        # ------------------------------------------------------
-        # Validate map data.
-        # ------------------------------------------------------
-
-        if map_data is None:
-
-            map_data = []
-
-        if not isinstance(
-            map_data,
-            list
-        ):
-
-            raise TypeError(
-                "map_data must be a list."
-            )
-
-        # ------------------------------------------------------
-        # Convert information to JSON.
-        # ------------------------------------------------------
-
-        preferences_json = json.dumps(
-            preferences,
-            indent=4
-        )
-
-        budget_json = json.dumps(
-            budget,
-            indent=4
-        )
-
-        research_json = json.dumps(
-            research,
-            indent=4
-        )
-
-        map_json = json.dumps(
-            map_data,
-            indent=4
-        )
-
-        # ======================================================
-        # FINAL GEMINI PROMPT
-        # ======================================================
-
-        prompt = f"""
-You are the main AI travel planning agent.
-
-You are now performing the FINAL reasoning stage
-of the travel planning process.
-
-The application has already:
-
-1. Received the user's original request.
-2. Interpreted the user's preferences using MoodAgent.
-3. Checked the user's budget.
-4. Generated candidate destinations.
-5. Obtained geographic information from MapService.
-6. Obtained destination research from ResearchAgent.
-
-Your job is now to combine this information and
-produce the most useful travel recommendation.
-
-------------------------------------------------------------
-INFORMATION YOU HAVE RECEIVED
-------------------------------------------------------------
-
-1. ORIGINAL USER REQUEST
-
-2. STRUCTURED TRAVEL PREFERENCE PROFILE
-
-3. CURRENT TRAVEL BUDGET
-
-4. MAP / LOCATION INFORMATION
-
-5. DESTINATION RESEARCH
-
-------------------------------------------------------------
-ORIGINAL USER REQUEST
-------------------------------------------------------------
-
-{user_input}
-
-------------------------------------------------------------
-STRUCTURED TRAVEL PREFERENCES
-------------------------------------------------------------
-
-{preferences_json}
-
-------------------------------------------------------------
-CURRENT TRAVEL BUDGET
-------------------------------------------------------------
-
-{budget_json}
-
-------------------------------------------------------------
-MAP / LOCATION INFORMATION
-------------------------------------------------------------
-
-{map_json}
-
-------------------------------------------------------------
-DESTINATION RESEARCH
-------------------------------------------------------------
-
-{research_json}
-
-------------------------------------------------------------
-PREFERENCE INTERPRETATION
-------------------------------------------------------------
-
-The original user request is the ultimate source
-of truth.
-
-The structured preference profile is supporting
-information.
-
-Positive mood scores represent desired
-characteristics.
-
-Negative mood scores represent characteristics
-the user wants to avoid.
-
-For example:
-
-    nature: 1.0
-
-means nature is strongly desired.
-
-And:
-
-    crowded: -1.0
-
-means crowded environments should be avoided.
-
-Do not interpret a negative score as a desired
-characteristic.
-
-------------------------------------------------------------
-BUDGET RULES
-------------------------------------------------------------
-
-The budget is a HARD planning constraint.
-
-The Budget class is responsible for maintaining
-the actual budget.
-
-You must NOT modify the budget.
-
-You must NOT claim that money has been spent.
-
-You must NOT assume a booking has been completed.
-
-Use the remaining budget when evaluating destinations.
-
-If exact costs are not available:
-
-    clearly identify the cost as unknown.
-
-Do not invent exact prices.
-
-------------------------------------------------------------
-MAP INFORMATION
-------------------------------------------------------------
-
-MapService provides geographic information.
-
-Use it to:
-
-- confirm destination identity
-- confirm country
-- identify latitude
-- identify longitude
-- distinguish similarly named places
-- understand geographic relationships
-
-Coordinates may later be used by the application's
-3D map system.
-
-Do not treat coordinates as a quality score.
-
-Do not invent coordinates.
-
-Do not claim MapService provides flight or hotel
-prices unless such information is explicitly included
-in the provided data.
-
-------------------------------------------------------------
-RESEARCH INFORMATION
-------------------------------------------------------------
-
-ResearchAgent provides supporting destination
-information.
-
-Use the research to understand:
-
-- nature
-- mountains
-- beaches
-- nightlife
-- urban environment
-- crowds
-- relaxation
-- activities
-- accessibility
-- fatigue
-- budget considerations
-- limitations
-
-ResearchAgent does NOT make the final decision.
-
-You must perform the final reasoning.
-
-Do not invent facts that are missing from the research.
-
-If information is unknown, say so.
-
-------------------------------------------------------------
-FINAL REASONING
-------------------------------------------------------------
-
-Evaluate the destinations using:
-
-1. User preferences.
-2. Avoided preferences.
-3. Preference strength.
-4. Budget.
-5. Geographic information.
-6. Destination characteristics.
-7. Travel fatigue.
-8. Accessibility.
-9. Overall suitability.
-
-A destination that technically matches one preference
-but strongly violates another important preference
-should not automatically be selected.
-
-Consider trade-offs.
-
-For example:
-
-A destination may have excellent nightlife
-but be extremely crowded.
-
-If the user strongly dislikes crowds, this should
-reduce its suitability.
-
-Likewise, a destination may have beautiful nature
-but require extensive transportation and hiking.
-
-If the user wants a relaxing and non-tiring trip,
-this should be considered a disadvantage.
-
-------------------------------------------------------------
-FINAL RESPONSE
-------------------------------------------------------------
-
-Provide a clear final travel recommendation.
-
-For each strong option, explain:
-
-- Destination
-- Country
-- Why it matches
-- Desired characteristics satisfied
-- Avoided characteristics
-- Budget suitability
-- Travel effort / fatigue
-- Important geographic information
-- Major advantages
-- Major limitations
-
-If one destination clearly fits better than the others,
-identify it as the strongest option.
-
-If there is no clear winner, explain the trade-offs.
-
-Do not claim that a trip has been booked.
-
-Do not claim that the user has spent money.
-
-Do not invent live prices.
-
-Do not invent hotel availability.
-
-Do not invent flight availability.
-
-Do not invent real-time transportation information.
-
-Clearly distinguish known information from unknown
-information.
-
-The final response should be useful to a user who is
-deciding which trip to pursue.
-"""
-
-        # ------------------------------------------------------
-        # Gemini request.
-        # ------------------------------------------------------
-
-        response = self.client.interactions.create(
-            model=self.model,
-            input=prompt
-        )
-
-        return response.output_text
+        return result
