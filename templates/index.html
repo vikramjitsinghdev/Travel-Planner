@@ -1,16 +1,15 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wanderlust — AI Travel Planner</title>
-    <meta name="description" content="AI-powered travel planning dashboard.">
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
-
-    <style>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Wanderlust — AI Travel Planner</title>
+<meta content="AI-powered travel planning dashboard." name="description"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Montserrat:wght@500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<style>
         :root {
             --navy: #06264a;
             --navy-2: #0b3768;
@@ -318,6 +317,8 @@
 
         .destination-card {
             position: relative;
+            background-size: cover;
+            background-position: center;
             overflow: hidden;
             border-radius: 16px;
             min-height: 180px;
@@ -874,619 +875,372 @@
         }
     </style>
 </head>
-
 <body>
 <div class="app">
-
-    <!-- ======================================================
+<!-- ======================================================
          SIDEBAR
     ======================================================= -->
-    <aside class="sidebar">
-        <div class="brand">
-            <img
-                class="brand-avatar"
-                src="https://i.pravatar.cc/100?img=47"
-                alt="Traveler"
-            >
-            <div>
-                <div class="brand-title">Travel<br>Dashboard</div>
-                <div class="brand-subtitle">Modern Explorer</div>
-            </div>
-        </div>
-
-        <nav class="nav">
-            <button class="nav-button active" data-page="home">
-                <span class="nav-icon">⌂</span>
-                <span class="nav-label">HOME</span>
-            </button>
-
-            <button class="nav-button" data-page="planner">
-                <span class="nav-icon">◎</span>
-                <span class="nav-label">PLAN TRIP</span>
-            </button>
-
-            <button class="nav-button" data-page="random">
-                <span class="nav-icon">↝</span>
-                <span class="nav-label">RANDOM EXPOSURE</span>
-            </button>
-
-            <button class="nav-button" data-page="budget">
-                <span class="nav-icon">▣</span>
-                <span class="nav-label">BUDGET MANAGEMENT</span>
-            </button>
-        </nav>
-
-        <div class="sidebar-bottom nav">
-            <button class="nav-button" data-page="planner">
-                <span class="nav-icon">✎</span>
-                <span class="nav-label">EDIT BASIC INFORMATION</span>
-            </button>
-
-            <button class="nav-button" data-page="credentials">
-                <span class="nav-icon">▦</span>
-                <span class="nav-label">USER CREDENTIALS</span>
-            </button>
-        </div>
-    </aside>
-
-    <!-- ======================================================
+<aside class="sidebar">
+<div class="brand">
+<img alt="Traveler" class="brand-avatar" src="https://i.pravatar.cc/100?img=47"/>
+<div>
+<div class="brand-title">Travel<br/>Dashboard</div>
+<div class="brand-subtitle">Modern Explorer</div>
+</div>
+</div>
+<nav class="nav">
+<button class="nav-button active" data-page="home">
+<span class="nav-icon">⌂</span>
+<span class="nav-label">HOME</span>
+</button>
+<button class="nav-button" data-page="planner">
+<span class="nav-icon">◎</span>
+<span class="nav-label">PLAN TRIP</span>
+</button>
+<button class="nav-button" data-page="random">
+<span class="nav-icon">↝</span>
+<span class="nav-label">RANDOM EXPOSURE</span>
+</button>
+<button class="nav-button" data-page="budget">
+<span class="nav-icon">▣</span>
+<span class="nav-label">BUDGET MANAGEMENT</span>
+</button>
+</nav>
+<div class="sidebar-bottom nav">
+<button class="nav-button" data-page="basic">
+<span class="nav-icon">✎</span>
+<span class="nav-label">EDIT BASIC INFORMATION</span>
+</button>
+<button class="nav-button" data-page="credentials">
+<span class="nav-icon">▦</span>
+<span class="nav-label">USER CREDENTIALS</span>
+</button>
+</div>
+</aside>
+<!-- ======================================================
          MAIN
     ======================================================= -->
-    <div class="main">
-
-        <header class="header">
-            <div class="header-title">Wanderlust</div>
-
-            <div class="header-actions">
-                <input
-                    id="searchBox"
-                    class="search"
-                    type="search"
-                    placeholder="Search destinations..."
-                >
-                <button class="header-icon" title="Notifications">♧</button>
-                <button class="header-icon" title="Settings">⚙</button>
-            </div>
-        </header>
-
-        <!-- ==================================================
+<div class="main">
+<header class="header">
+<div class="header-title">Wanderlust</div>
+<div class="header-actions">
+<input class="search" id="searchBox" placeholder="Search destinations..." type="search"/>
+<button class="header-icon" title="Notifications">♧</button>
+<button class="header-icon" title="Settings">⚙</button>
+</div>
+</header>
+<!-- ==================================================
              HOME
         =================================================== -->
-        <section id="page-home" class="page active">
-
-            <section class="hero">
-                <div class="hero-inner">
-                    <span class="pill">AI-Powered Travel Planning</span>
-
-                    <h1>Explore the World</h1>
-
-                    <p>
+<section class="page active" id="page-home">
+<section class="hero">
+<div class="hero-inner">
+<span class="pill">AI-Powered Travel Planning</span>
+<h1>Explore the World</h1>
+<p>
                         Discover breathtaking destinations, describe the experience
                         you want, compare AI-generated travel options, and keep the
                         final trip inside your budget.
                     </p>
-
-                    <div class="hero-actions">
-                        <button class="btn btn-primary" onclick="showPage('planner')">
+<div class="hero-actions">
+<button class="btn btn-primary" onclick="showPage('basic')">
                             START PLANNING →
                         </button>
-
-                        <button class="btn btn-light" onclick="showPage('random')">
+<button class="btn btn-light" onclick="showPage('random'); loadRandomDestination()">
                             ✦ Surprise Me
                         </button>
-                    </div>
-                </div>
-            </section>
-
-            <section class="section">
-                <div class="section-heading">
-                    <div>
-                        <h2>Trending Destinations</h2>
-                        <p>Sample destinations shown on the dashboard.</p>
-                    </div>
-                    <button class="btn btn-light" onclick="showPage('random')">
+</div>
+</div>
+</section>
+<section class="section">
+<div class="section-heading">
+<div>
+<h2>Trending Destinations</h2>
+<p>Sample destinations shown on the dashboard.</p>
+</div>
+<button class="btn btn-light" onclick="showPage('random'); loadRandomDestination()">
                         View All →
                     </button>
-                </div>
-
-                <div class="destination-grid">
-                    <article class="destination-card large">
-                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuAcUQnNIQAVOKzxqJ9Uo8nnQi46bi7jRdk-CV3WclxyRa0VDg4FqQvd7wvVVfBKHKR6AHbXzXxz4tsD8dRm_HqwAPg7YmuA8x4mzflY9fVJjuZ_3_62DNmhDhGdHYoxGpJH1xAtWQRTqAZRtOf-_St6i2C5QdJFiR85YSmP6mIchTu1-7_tqPPnlXlhBtLdqg9IG46zUCsvg08Qsawlv81e3pjfOo793qYe86UpHsfpyv0pLy2IYHus" alt="Santorini">
-                        <div class="destination-overlay">
-                            <h3>Santorini, Greece</h3>
-                            <p>Stunning sunsets and iconic Aegean architecture.</p>
-                        </div>
-                    </article>
-
-                    <article class="destination-card wide">
-                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBrmnj1frVds0otMxiyQye_LEq1yKEWp2Xjy0TlieuyqMZEEkQnZzlhtDCATADT2B57EW9Vko2DPx3_bYNuHy1UzZz8_1Ytfxt-7is_WM7CTP9xW1RbTK4BHQm6fDiWVaIpUscFAUDtYXmMF3XfQv_RVF92dB5oG2WIBizX3ujZEMHSfUVlgEHaEIeU33k31DXL2ui7yfWTTGZ3N3sRztOOzQqlcXfU3g-KYV8lzbUcBCkrV_Y_U5VD" alt="Kyoto">
-                        <div class="destination-overlay">
-                            <h3>Kyoto, Japan</h3>
-                            <p>Ancient traditions, temples and bamboo forests.</p>
-                        </div>
-                    </article>
-
-                    <article class="destination-card">
-                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuB4G77v1QchjeQuNllOSuXdM7mEHuduXhmmwnYYXqeaPrVhA-enzHg-WbdISwpdZH65Q6Vq5tVrESLWFzQErKxdtw0d_3u2SP5koR2lR6neEZKVDhPwaMaPp8WtA7BA5AYd5nFq3t4e4pOFPi60nmla-CJxyMpvB6opGnbd5A4fBnWeZiwPrYzrokBqKO1CsUDqWY89mQSeifgMxbBNAvOufCo66oQJ5ldo3paJoEAeUzmOdsJZoGUM" alt="Maldives">
-                        <div class="destination-overlay">
-                            <h3>Maldives</h3>
-                            <p>Turquoise lagoons and tropical tranquility.</p>
-                        </div>
-                    </article>
-
-                    <article class="destination-card">
-                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuAq8VEfx5srTwsnHQ20S_7yUuN_9GzfMex6R_cNMxRymtIcx16qQYXQ1kt6lRdb4wKQGs-QxbMRqDLsIpeU3HdsRm0_GjuwCRF1TvqlcH2nFXn2r6PnBWVs06oXjBynZdc1ZfOERvZF0guuNAe79PZTQMWcY18VTBEgdzz1TuTrsyc-grQYI7h3VSxKs0BIf70o8YX11bSn7FUG33iBd88jmrLKTu8HrehhdYcJLn3O5WRhxmSFV2J6" alt="Swiss Alps">
-                        <div class="destination-overlay">
-                            <h3>Swiss Alps</h3>
-                            <p>Mountain landscapes and pristine alpine lakes.</p>
-                        </div>
-                    </article>
-                </div>
-            </section>
-
-            <section class="section" style="padding-top:0;">
-                <div class="panel">
-                    <h2 style="margin-top:0;">Your AI Travel Workflow</h2>
-                    <div class="option-meta">
-                        <div class="meta-box">
-                            <small>01</small>
-                            <strong>Trip information</strong>
-                        </div>
-                        <div class="meta-box">
-                            <small>02</small>
-                            <strong>Mood analysis</strong>
-                        </div>
-                        <div class="meta-box">
-                            <small>03</small>
-                            <strong>Candidate destinations</strong>
-                        </div>
-                        <div class="meta-box">
-                            <small>04</small>
-                            <strong>Map + research</strong>
-                        </div>
-                        <div class="meta-box">
-                            <small>05</small>
-                            <strong>Compare options</strong>
-                        </div>
-                        <div class="meta-box">
-                            <small>06</small>
-                            <strong>Select → estimate → confirm</strong>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        </section>
-
-        <!-- ==================================================
+</div>
+<div class="destination-grid"><div id="homeDestinations" style="grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;"></div></div>
+</section>
+<section class="section" style="padding-top:0;">
+<div class="panel">
+<h2 style="margin-top:0;">Your AI Travel Workflow</h2>
+<div class="option-meta">
+<div class="meta-box">
+<small>01</small>
+<strong>Trip information</strong>
+</div>
+<div class="meta-box">
+<small>02</small>
+<strong>Mood analysis</strong>
+</div>
+<div class="meta-box">
+<small>03</small>
+<strong>Candidate destinations</strong>
+</div>
+<div class="meta-box">
+<small>04</small>
+<strong>Map + research</strong>
+</div>
+<div class="meta-box">
+<small>05</small>
+<strong>Compare options</strong>
+</div>
+<div class="meta-box">
+<small>06</small>
+<strong>Select → estimate → confirm</strong>
+</div>
+</div>
+</div>
+</section>
+</section>
+<!-- ==================================================
              PLANNER
         =================================================== -->
-        <section id="page-planner" class="page">
-            <div class="container">
 
-                <div class="wizard">
-                    <h1 class="page-title">Plan Your Trip</h1>
-                    <p class="page-description">
-                        Enter the basic trip information first. Your information is
-                        sent to Flask and then processed by the backend pipeline.
-                    </p>
-
-                    <div class="panel">
-
-                        <form id="tripForm">
-
-                            <div class="form-grid">
-
-                                <div class="field full">
-                                    <label for="departure_location">
-                                        Where will the trip start from?
-                                    </label>
-                                    <input
-                                        id="departure_location"
-                                        required
-                                        placeholder="Saint John, NB, Canada"
-                                    >
-                                    <span class="helper">
-                                        Your departure country can automatically
-                                        determine the domestic travel country.
-                                    </span>
-                                </div>
-
-                                <div class="field full">
-                                    <label>Where do you want to travel?</label>
-
-                                    <div class="radio-row">
-                                        <label class="radio-card">
-                                            <input
-                                                type="radio"
-                                                name="trip_scope"
-                                                value="domestic"
-                                                checked
-                                            >
-                                            Anywhere in my country
-                                        </label>
-
-                                        <label class="radio-card">
-                                            <input
-                                                type="radio"
-                                                name="trip_scope"
-                                                value="international"
-                                            >
-                                            International / abroad
-                                        </label>
-
-                                        <label class="radio-card">
-                                            <input
-                                                type="radio"
-                                                name="trip_scope"
-                                                value="anywhere"
-                                            >
-                                            Anywhere
-                                        </label>
-                                    </div>
-                                </div>
-
-                                <div
-                                    class="field full"
-                                    id="countryField"
-                                >
-                                    <label for="country">
-                                        Which country are you traveling within?
-                                    </label>
-                                    <input
-                                        id="country"
-                                        placeholder="Canada"
-                                    >
-                                    <span id="countryHint" class="helper"></span>
-                                </div>
-
-                                <div class="field">
-                                    <label for="travelers">
-                                        How many people are traveling?
-                                    </label>
-                                    <input
-                                        id="travelers"
-                                        type="number"
-                                        min="1"
-                                        value="2"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="duration_days">
-                                        How many days?
-                                    </label>
-                                    <input
-                                        id="duration_days"
-                                        type="number"
-                                        min="1"
-                                        value="7"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="travel_dates">
-                                        When do you want to travel?
-                                    </label>
-                                    <input
-                                        id="travel_dates"
-                                        required
-                                        placeholder="September 18, 2026"
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="maximum_total_travel_time">
-                                        Maximum travel time
-                                    </label>
-                                    <input
-                                        id="maximum_total_travel_time"
-                                        value="no preference"
-                                        placeholder="6 hours / no preference"
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="maximum_distance">
-                                        Maximum travel distance
-                                    </label>
-                                    <input
-                                        id="maximum_distance"
-                                        value="no preference"
-                                        placeholder="1000 km / no preference"
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="transportation_preference">
-                                        Preferred transportation
-                                    </label>
-                                    <select id="transportation_preference">
-                                        <option>no preference</option>
-                                        <option>car</option>
-                                        <option>flight</option>
-                                        <option>train</option>
-                                        <option>bus</option>
-                                    </select>
-                                </div>
-
-                                <div class="field">
-                                    <label for="accommodation_preference">
-                                        Preferred accommodation
-                                    </label>
-                                    <select id="accommodation_preference">
-                                        <option>no preference</option>
-                                        <option>hotel</option>
-                                        <option>Airbnb</option>
-                                        <option>hostel</option>
-                                        <option>resort</option>
-                                        <option>camping</option>
-                                    </select>
-                                </div>
-
-                                <div class="field">
-                                    <label for="safety_requirement">
-                                        Safety requirements / concerns
-                                    </label>
-                                    <input
-                                        id="safety_requirement"
-                                        placeholder="None"
-                                    >
-                                </div>
-
-                                <div class="field">
-                                    <label for="budget">
-                                        Total travel budget (CAD)
-                                    </label>
-                                    <input
-                                        id="budget"
-                                        type="number"
-                                        min="1"
-                                        step="0.01"
-                                        value="5000"
-                                        required
-                                    >
-                                </div>
-
-                                <div class="field full">
-                                    <label for="other">
-                                        Any other trip requirements?
-                                    </label>
-                                    <textarea
-                                        id="other"
-                                        placeholder="None"
-                                    ></textarea>
-                                </div>
-
-                                <div class="field full">
-                                    <label for="user_preferences">
-                                        What do you want from your trip?
-                                    </label>
-                                    <textarea
-                                        id="user_preferences"
-                                        required
-                                        placeholder="I want a beautiful, natural and peaceful experience away from urban crowds..."
-                                    ></textarea>
-                                </div>
-
-                            </div>
-
-                            <div id="plannerError" class="error"></div>
-                            <div id="plannerLoading" class="loading">
-                                AI systems are processing your trip. This can take a
-                                little while because the backend runs multiple planning stages.
-                            </div>
-
-                            <div class="form-actions">
-                                <button
-                                    type="button"
-                                    class="btn btn-light"
-                                    onclick="showPage('home')"
-                                >
-                                    ← Back
-                                </button>
-
-                                <button
-                                    type="submit"
-                                    class="btn btn-primary"
-                                    id="startTripButton"
-                                >
-                                    FIND TRIPS →
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- RESULTS -->
-                <div id="resultsSection" style="display:none; margin-top:30px;">
-                    <div class="results-header">
-                        <div>
-                            <h2 style="margin:0;">Recommended Travel Options</h2>
-                            <p style="margin:5px 0;color:var(--muted);font-size:13px;">
-                                Choose one option if you are satisfied with the current search.
-                                Selection creates a temporary detailed cost estimate.
-                            </p>
-                        </div>
-
-                        <button
-                            class="btn btn-light"
-                            onclick="resetPlanner()"
-                        >
-                            New Search
-                        </button>
-                    </div>
-
-                    <div id="resultGrid" class="result-grid"></div>
-
-                    <div id="selectionPanel" class="panel" style="margin-top:20px; display:none;">
-                        <h3 style="margin-top:0;">Selected Trip</h3>
-                        <p id="selectedTripName" style="font-weight:700;"></p>
-                        <p style="font-size:13px;color:var(--muted);">
-                            The backend will now calculate the detailed estimated
-                            costs for this destination. These costs are temporary until
-                            you confirm the trip.
-                        </p>
-
-                        <div id="selectedTripContent"></div>
-
-                        <div class="form-actions">
-                            <button class="btn btn-light" onclick="clearSelection()">
-                                Choose Another
-                            </button>
-
-                            <button
-                                class="btn btn-primary"
-                                id="confirmTripButton"
-                                onclick="confirmTrip()"
-                            >
-                                CONFIRM TRIP
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ==================================================
+<!-- ==================================================
              RANDOM EXPOSURE
         =================================================== -->
-        <section id="page-random" class="page">
-            <div class="container">
-                <h1 class="page-title">Random Exposure</h1>
-                <p class="page-description">
-                    Discover destinations outside the current planning workflow.
-                </p>
 
-                <div class="panel">
-                    <div class="hero" style="min-height:390px;border-radius:15px;">
-                        <div class="hero-inner">
-                            <span class="pill">Hidden Gem</span>
-                            <h1 style="font-size:44px;">Waitomo Caves</h1>
-                            <p>
-                                A subterranean New Zealand experience illuminated by
-                                thousands of glowworms.
-                            </p>
-                            <div class="hero-actions">
-                                <button
-                                    class="btn btn-primary"
-                                    onclick="showPage('planner')"
-                                >
-                                    PLAN THIS KIND OF TRIP
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ==================================================
+<!-- ==================================================
              BUDGET
         =================================================== -->
-        <section id="page-budget" class="page">
-            <div class="container">
-                <h1 class="page-title">Budget Management</h1>
-                <p class="page-description">
+
+<section class="page" id="page-basic">
+<div class="container">
+<div class="wizard">
+<h1 class="page-title">Basic Trip Information</h1>
+<p class="page-description">Tell Wanderlust the practical details of your trip. This section does not ask about the experience you want.</p>
+<div class="panel">
+<form id="basicTripForm">
+<div class="form-grid">
+<div class="field full">
+<label for="departure_location">Where will the trip start from?</label>
+<input id="departure_location" placeholder="Saint John, NB, Canada" required=""/>
+<span class="helper" id="departureHint">For domestic trips, the country can be detected from this location.</span>
+</div>
+<div class="field full">
+<label>Where do you want to travel?</label>
+<div class="radio-row">
+<label class="radio-card"><input checked="" name="trip_scope" type="radio" value="domestic"/> Anywhere in my country</label>
+<label class="radio-card"><input name="trip_scope" type="radio" value="international"/> International / abroad</label>
+<label class="radio-card"><input name="trip_scope" type="radio" value="anywhere"/> Anywhere</label>
+</div>
+</div>
+<div class="field full" id="countryField">
+<label for="country">Which country are you traveling within?</label>
+<input id="country" placeholder="Canada"/>
+<span class="helper" id="countryHint"></span>
+</div>
+<div class="field">
+<label for="travelers">How many people are traveling?</label>
+<input id="travelers" min="1" required="" type="number" value="2"/>
+</div>
+<div class="field">
+<label for="duration_days">How many days?</label>
+<input id="duration_days" min="1" required="" type="number" value="7"/>
+</div>
+<div class="field">
+<label for="travel_dates">When do you want to travel?</label>
+<input id="travel_dates" placeholder="September 18, 2026" required=""/>
+</div>
+<div class="field">
+<label for="maximum_total_travel_time">Maximum travel time</label>
+<input id="maximum_total_travel_time" placeholder="6 hours / no preference" value="no preference"/>
+</div>
+<div class="field">
+<label for="maximum_distance">Maximum travel distance</label>
+<input id="maximum_distance" placeholder="1000 km / no preference" value="no preference"/>
+</div>
+<div class="field">
+<label for="transportation_preference">Preferred transportation</label>
+<select id="transportation_preference">
+<option>no preference</option><option>car</option><option>flight</option><option>train</option><option>bus</option>
+</select>
+</div>
+<div class="field">
+<label for="accommodation_preference">Preferred accommodation</label>
+<select id="accommodation_preference">
+<option>no preference</option><option>hotel</option><option>Airbnb</option><option>hostel</option><option>resort</option><option>camping</option>
+</select>
+</div>
+<div class="field">
+<label for="safety_requirement">Safety requirements / concerns</label>
+<input id="safety_requirement" placeholder="None"/>
+</div>
+<div class="field">
+<label for="budget">Total travel budget (CAD)</label>
+<input id="budget" min="1" required="" step="0.01" type="number" value="5000"/>
+</div>
+<div class="field full">
+<label for="other">Any other trip requirements?</label>
+<textarea id="other" placeholder="None"></textarea>
+</div>
+</div>
+<div class="error" id="basicError"></div>
+<div class="success" id="basicSaved"></div>
+<div class="form-actions">
+<button class="btn btn-light" onclick="showPage('home')" type="button">← Back</button>
+<button class="btn btn-primary" type="submit">CONTINUE TO PLAN TRIP →</button>
+</div>
+</form>
+</div>
+</div>
+</div>
+</section>
+<section class="page" id="page-planner">
+<div class="container">
+<div class="wizard">
+<h1 class="page-title">Plan Your Trip</h1>
+<p class="page-description">Describe only the experience you want. Your basic trip information is kept separately and will be combined with this request when you search.</p>
+<div class="panel" id="plannerBasicNotice" style="margin-bottom:18px;display:none;">
+<strong>Basic information is required first.</strong>
+<p style="color:var(--muted);font-size:13px;">Complete the practical trip details before asking the AI to find destinations.</p>
+<button class="btn btn-primary" onclick="showPage('basic')" type="button">ENTER BASIC INFORMATION</button>
+</div>
+<div class="panel" id="preferencePanel">
+<form id="tripForm">
+<div class="field full">
+<label for="user_preferences">What do you want from your trip?</label>
+<textarea id="user_preferences" placeholder="I want a beautiful, natural and peaceful experience away from urban crowds and noise." required="" style="min-height:180px;"></textarea>
+<span class="helper">Describe the mood, activities, scenery, atmosphere, pace, and things you want to avoid. Do not repeat your basic trip information here.</span>
+</div>
+<div class="error" id="plannerError"></div>
+<div class="loading" id="plannerLoading">AI systems are processing your trip...</div>
+<div class="form-actions">
+<button class="btn btn-light" onclick="showPage('basic')" type="button">← Basic Information</button>
+<button class="btn btn-primary" id="startTripButton" type="submit">FIND TRIPS →</button>
+</div>
+</form>
+</div>
+</div>
+<div id="resultsSection" style="display:none;margin-top:30px;">
+<div class="results-header">
+<div><h2 style="margin:0;">Recommended Travel Options</h2><p style="margin:5px 0;color:var(--muted);font-size:13px;">Choose an option. Detailed costs are calculated only after selection.</p></div>
+<button class="btn btn-light" onclick="resetPlanner()">New Search</button>
+</div>
+<div class="result-grid" id="resultGrid"></div>
+<div class="panel" id="selectionPanel" style="margin-top:20px;display:none;">
+<h3 style="margin-top:0;">Selected Trip</h3>
+<p id="selectedTripName" style="font-weight:700;"></p>
+<p style="font-size:13px;color:var(--muted);">Estimated costs are temporary until you confirm the trip.</p>
+<div id="selectedTripContent"></div>
+<div class="form-actions">
+<button class="btn btn-light" onclick="clearSelection()">Choose Another</button>
+<button class="btn btn-primary" id="confirmTripButton" onclick="confirmTrip()">CONFIRM TRIP</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="page" id="page-random">
+<div class="container">
+<div class="section-heading">
+<div><h1 class="page-title">Random Exposure</h1><p class="page-description">Explore a randomly selected destination without starting the AI planning workflow.</p></div>
+<button class="btn btn-primary" onclick="loadRandomDestination()">↻ RANDOMIZE</button>
+</div>
+<div class="panel" id="randomDestination">
+<div class="loading" style="display:block;">Loading a destination...</div>
+</div>
+</div>
+</section>
+
+
+<section class="page" id="page-budget">
+<div class="container">
+<h1 class="page-title">Budget Management</h1>
+<p class="page-description">
                     Current budget information comes from your active backend trip session.
                 </p>
-
-                <div id="budgetEmpty" class="panel">
-                    <strong>No active trip yet.</strong>
-                    <p style="color:var(--muted);font-size:13px;">
+<div class="panel" id="budgetEmpty">
+<strong>No active trip yet.</strong>
+<p style="color:var(--muted);font-size:13px;">
                         Start a trip first. The budget page will then show the budget,
                         temporary estimates, and confirmed expenses returned by Flask.
                     </p>
-                    <button class="btn btn-primary" onclick="showPage('planner')">
+<button class="btn btn-primary" onclick="showPage('basic')">
                         START PLANNING
                     </button>
-                </div>
-
-                <div id="budgetContent" style="display:none;">
-                    <div class="metrics">
-                        <div class="metric">
-                            <small>Total Budget</small>
-                            <strong id="budgetTotal">$0.00</strong>
-                        </div>
-                        <div class="metric">
-                            <small>Spent</small>
-                            <strong id="budgetSpent">$0.00</strong>
-                        </div>
-                        <div class="metric">
-                            <small>Remaining</small>
-                            <strong id="budgetRemaining">$0.00</strong>
-                        </div>
-                        <div class="metric">
-                            <small>Estimated Trip</small>
-                            <strong id="budgetEstimated">$0.00</strong>
-                        </div>
-                    </div>
-
-                    <div class="panel">
-                        <h3 style="margin-top:0;">Budget Utilization</h3>
-                        <div class="budget-bar">
-                            <span id="budgetProgress"></span>
-                        </div>
-                        <p id="budgetSummary" style="font-size:12px;color:var(--muted);"></p>
-                    </div>
-
-                    <div class="panel" style="margin-top:18px;">
-                        <h3 style="margin-top:0;">Estimated / Confirmed Costs</h3>
-                        <div id="budgetExpenses" class="expense-list"></div>
-                    </div>
-
-                    <div class="form-actions">
-                        <button class="btn btn-light" onclick="refreshStatus()">
+</div>
+<div id="budgetContent" style="display:none;">
+<div class="metrics">
+<div class="metric">
+<small>Total Budget</small>
+<strong id="budgetTotal">$0.00</strong>
+</div>
+<div class="metric">
+<small>Spent</small>
+<strong id="budgetSpent">$0.00</strong>
+</div>
+<div class="metric">
+<small>Remaining</small>
+<strong id="budgetRemaining">$0.00</strong>
+</div>
+<div class="metric">
+<small>Estimated Trip</small>
+<strong id="budgetEstimated">$0.00</strong>
+</div>
+</div>
+<div class="panel">
+<h3 style="margin-top:0;">Budget Utilization</h3>
+<div class="budget-bar">
+<span id="budgetProgress"></span>
+</div>
+<p id="budgetSummary" style="font-size:12px;color:var(--muted);"></p>
+</div>
+<div class="panel" style="margin-top:18px;">
+<h3 style="margin-top:0;">Estimated / Confirmed Costs</h3>
+<div class="expense-list" id="budgetExpenses"></div>
+</div>
+<div class="form-actions">
+<button class="btn btn-light" onclick="refreshStatus()">
                             ↻ Refresh Status
                         </button>
-                        <button class="btn btn-danger" onclick="cancelCurrentTrip()">
+<button class="btn btn-danger" onclick="cancelCurrentTrip()">
                             Cancel Trip
                         </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ==================================================
+</div>
+</div>
+</div>
+</section>
+<!-- ==================================================
              CREDENTIALS
         =================================================== -->
-        <section id="page-credentials" class="page">
-            <div class="container">
-                <h1 class="page-title">User Credentials</h1>
-                <p class="page-description">
+<section class="page" id="page-credentials">
+<div class="container">
+<h1 class="page-title">User Credentials</h1>
+<p class="page-description">
                     Travel credentials and digital passes can be connected here later.
                 </p>
-
-                <div class="panel">
-                    <h3 style="margin-top:0;">Travel Vault</h3>
-                    <p style="color:var(--muted);font-size:13px;">
+<div class="panel">
+<h3 style="margin-top:0;">Travel Vault</h3>
+<p style="color:var(--muted);font-size:13px;">
                         This section is intentionally separate from the AI planning
                         pipeline. No sensitive credential information is sent to
                         the travel AI.
                     </p>
-                </div>
-            </div>
-        </section>
-
-    </div>
 </div>
-
+</div>
+</section>
+</div>
+</div>
 <!-- ==========================================================
      DESTINATION MODAL
 =========================================================== -->
-<div id="destinationModal" class="modal-backdrop">
-    <div class="modal">
-        <div class="modal-header">
-            <div>
-                <div id="modalCountry" class="result-country"></div>
-                <h2 id="modalTitle" style="margin:6px 0;"></h2>
-            </div>
-            <button class="close" onclick="closeModal()">×</button>
-        </div>
-        <p id="modalReason" style="color:#475569;line-height:1.65;"></p>
-        <div id="modalMap" class="map-list"></div>
-    </div>
+<div class="modal-backdrop" id="destinationModal">
+<div class="modal">
+<div class="modal-header">
+<div>
+<div class="result-country" id="modalCountry"></div>
+<h2 id="modalTitle" style="margin:6px 0;"></h2>
+</div>
+<button class="close" onclick="closeModal()">×</button>
+</div>
+<p id="modalReason" style="color:#475569;line-height:1.65;"></p>
+<div class="map-list" id="modalMap"></div>
+</div>
 </div>
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

@@ -1,11 +1,6 @@
-from flask import (
-    Flask,
-    jsonify,
-    request,
-    render_template
-)
-
+from flask import Flask, jsonify, request, render_template
 import main
+import database
 
 
 # ==========================================================
@@ -20,84 +15,126 @@ app = Flask(
 
 
 # ==========================================================
-# HOME PAGE
+# HELPERS
+# ==========================================================
+
+def json_body():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        raise ValueError("Request body must contain valid JSON.")
+
+    return data
+
+
+def backend_call(function, data):
+    """
+    Call main.py and persist the returned trip state in SQLite.
+    main.py remains the owner of the travel-planning workflow.
+    """
+    result = function(trip_data=data)
+
+    if isinstance(result, dict) and result.get("trip_id"):
+        database.save_trip(result)
+
+    return result
+
+
+# ==========================================================
+# STARTUP
+# ==========================================================
+
+database.init_db()
+
+
+# ==========================================================
+# HOME
 # ==========================================================
 
 @app.route("/")
 def home():
-    """
-    Serve the Wanderlust frontend.
-    """
-
-    return render_template(
-        "index.html"
-    )
+    return render_template("index.html")
 
 
 # ==========================================================
-# HEALTH CHECK
+# HEALTH
 # ==========================================================
 
-@app.route(
-    "/api/health",
-    methods=["GET"]
-)
+@app.route("/api/health", methods=["GET"])
 def health():
-    """
-    Check whether Flask and the backend are running.
-    """
-
     return jsonify({
         "status": "success",
-        "message": (
-            "AI Travel Planner backend is running."
-        )
+        "message": "AI Travel Planner backend is running."
     })
+
+
+# ==========================================================
+# DESTINATION INSPIRATION
+# ==========================================================
+
+@app.route("/api/destinations/home", methods=["GET"])
+def home_destinations():
+    try:
+        limit = request.args.get("limit", 4, type=int)
+        return jsonify({
+            "status": "success",
+            "data": database.random_destinations(limit)
+        })
+    except Exception as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+
+
+@app.route("/api/destinations/random", methods=["GET"])
+def random_destination():
+    try:
+        destination = database.random_destination()
+
+        if destination is None:
+            return jsonify({
+                "status": "error",
+                "message": "No preloaded destinations are available."
+            }), 404
+
+        return jsonify({
+            "status": "success",
+            "data": destination
+        })
+    except Exception as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
 
 
 # ==========================================================
 # START TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/start",
-    methods=["POST"]
-)
+@app.route("/api/trip/start", methods=["POST"])
 def start_trip():
-    """
-    Start a new travel planning session.
-
-    Frontend
-        ↓
-    app.py
-        ↓
-    main.start_trip()
-        ↓
-    AI / Map / Budget systems
-    """
-
     try:
+        data = json_body()
 
-        data = request.get_json(
-            silent=True
-        )
+        # The frontend must send preference text separately
+        # as a normal string.
+        user_preferences = data.get("user_preferences")
 
-        if not isinstance(
-            data,
-            dict
-        ):
-
+        if not isinstance(user_preferences, str):
             return jsonify({
                 "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
+                "message": "user_preferences must be a string."
             }), 400
 
-        result = main.start_trip(
-            trip_data=data
-        )
+        if not user_preferences.strip():
+            return jsonify({
+                "status": "error",
+                "message": "user_preferences cannot be empty."
+            }), 400
+
+        result = backend_call(main.start_trip, data)
 
         return jsonify({
             "status": "success",
@@ -105,7 +142,6 @@ def start_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -116,37 +152,11 @@ def start_trip():
 # UPDATE TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/update",
-    methods=["POST"]
-)
+@app.route("/api/trip/update", methods=["POST"])
 def update_trip():
-    """
-    Change the requirements of an existing trip.
-    """
-
     try:
-
-        data = request.get_json(
-            silent=True
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.update_trip(
-            trip_data=data
-        )
+        data = json_body()
+        result = backend_call(main.update_trip, data)
 
         return jsonify({
             "status": "success",
@@ -154,7 +164,6 @@ def update_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -165,41 +174,11 @@ def update_trip():
 # SELECT TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/select",
-    methods=["POST"]
-)
+@app.route("/api/trip/select", methods=["POST"])
 def select_trip():
-    """
-    Select one of the candidate destinations.
-
-    This creates a temporary detailed cost estimate.
-
-    It does NOT commit the budget.
-    """
-
     try:
-
-        data = request.get_json(
-            silent=True
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.select_trip(
-            trip_data=data
-        )
+        data = json_body()
+        result = backend_call(main.select_trip, data)
 
         return jsonify({
             "status": "success",
@@ -207,7 +186,6 @@ def select_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -218,40 +196,11 @@ def select_trip():
 # CONFIRM TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/confirm",
-    methods=["POST"]
-)
+@app.route("/api/trip/confirm", methods=["POST"])
 def confirm_trip():
-    """
-    Confirm the selected trip.
-
-    This is the point where temporary budget estimates
-    become committed budget expenses.
-    """
-
     try:
-
-        data = request.get_json(
-            silent=True
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.confirm_trip(
-            trip_data=data
-        )
+        data = json_body()
+        result = backend_call(main.confirm_trip, data)
 
         return jsonify({
             "status": "success",
@@ -259,7 +208,6 @@ def confirm_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -270,39 +218,11 @@ def confirm_trip():
 # CANCEL TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/cancel",
-    methods=["POST"]
-)
+@app.route("/api/trip/cancel", methods=["POST"])
 def cancel_trip():
-    """
-    Cancel the current planning session.
-
-    Temporary estimates are discarded.
-    """
-
     try:
-
-        data = request.get_json(
-            silent=True
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.cancel_trip(
-            trip_data=data
-        )
+        data = json_body()
+        result = backend_call(main.cancel_trip, data)
 
         return jsonify({
             "status": "success",
@@ -310,7 +230,6 @@ def cancel_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -321,37 +240,11 @@ def cancel_trip():
 # TRIP STATUS
 # ==========================================================
 
-@app.route(
-    "/api/trip/status",
-    methods=["POST"]
-)
+@app.route("/api/trip/status", methods=["POST"])
 def trip_status():
-    """
-    Get the current state of a trip.
-    """
-
     try:
-
-        data = request.get_json(
-            silent=True
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.get_trip_status(
-            trip_data=data
-        )
+        data = json_body()
+        result = backend_call(main.get_trip_status, data)
 
         return jsonify({
             "status": "success",
@@ -359,7 +252,6 @@ def trip_status():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -367,40 +259,23 @@ def trip_status():
 
 
 # ==========================================================
-# DELETE TRIP SESSION
+# DELETE TRIP
 # ==========================================================
 
-@app.route(
-    "/api/trip/delete",
-    methods=["POST"]
-)
+@app.route("/api/trip/delete", methods=["POST"])
 def delete_trip():
-    """
-    Delete a temporary trip planning session.
-    """
-
     try:
+        data = json_body()
+        trip_id = data.get("trip_id")
 
-        data = request.get_json(
-            silent=True
-        )
+        if not trip_id:
+            raise ValueError("trip_id is required.")
 
-        if not isinstance(
-            data,
-            dict
-        ):
+        # Delete from main.py first.
+        result = main.delete_trip(trip_data=data)
 
-            return jsonify({
-                "status": "error",
-                "message": (
-                    "Request body must contain "
-                    "valid JSON."
-                )
-            }), 400
-
-        result = main.delete_trip(
-            trip_data=data
-        )
+        # Then remove the persisted database record.
+        database.delete_trip(trip_id)
 
         return jsonify({
             "status": "success",
@@ -408,7 +283,6 @@ def delete_trip():
         })
 
     except Exception as error:
-
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -416,11 +290,10 @@ def delete_trip():
 
 
 # ==========================================================
-# RUN APPLICATION
+# RUN
 # ==========================================================
 
 if __name__ == "__main__":
-
     app.run(
         host="127.0.0.1",
         port=5000,
