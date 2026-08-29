@@ -1,0 +1,1493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wanderlust — AI Travel Planner</title>
+    <meta name="description" content="AI-powered travel planning dashboard.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --navy: #06264a;
+            --navy-2: #0b3768;
+            --blue: #2563eb;
+            --blue-soft: #eff6ff;
+            --orange: #c65b00;
+            --orange-hover: #a94c00;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --surface: #ffffff;
+            --background: #f8fafc;
+            --success: #059669;
+            --danger: #dc2626;
+            --shadow: 0 8px 28px rgba(15, 23, 42, .08);
+            --radius: 18px;
+        }
+
+        * { box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            margin: 0;
+            background: var(--background);
+            color: var(--text);
+            font-family: "Inter", system-ui, sans-serif;
+            overflow-x: hidden;
+        }
+
+        button, input, select, textarea { font: inherit; }
+
+        button { cursor: pointer; }
+
+        .app {
+            min-height: 100vh;
+        }
+
+        /* ---------------- SIDEBAR ---------------- */
+
+        .sidebar {
+            position: fixed;
+            inset: 0 auto 0 0;
+            width: 200px;
+            background: var(--navy);
+            color: white;
+            z-index: 100;
+            padding: 22px 0;
+            box-shadow: 3px 0 12px rgba(0,0,0,.12);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 0 18px 26px;
+        }
+
+        .brand-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid rgba(255,255,255,.45);
+        }
+
+        .brand-title {
+            font-family: "Montserrat", sans-serif;
+            font-weight: 800;
+            font-size: 17px;
+            line-height: 1.05;
+        }
+
+        .brand-subtitle {
+            color: #a9c1df;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+
+        .nav {
+            display: grid;
+            gap: 5px;
+        }
+
+        .nav-button {
+            width: 100%;
+            border: 0;
+            background: transparent;
+            color: #a9c1df;
+            text-align: left;
+            padding: 13px 18px;
+            font-weight: 600;
+            font-size: 12px;
+            letter-spacing: .02em;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-button:hover,
+        .nav-button.active {
+            color: white;
+            background: var(--navy-2);
+            border-left-color: var(--orange);
+        }
+
+        .nav-icon {
+            width: 18px;
+            text-align: center;
+            font-size: 15px;
+        }
+
+        .sidebar-bottom {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 18px;
+        }
+
+        /* ---------------- HEADER ---------------- */
+
+        .main {
+            margin-left: 200px;
+            min-height: 100vh;
+        }
+
+        .header {
+            height: 58px;
+            background: rgba(255,255,255,.96);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 28px;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .header-title {
+            font-family: "Montserrat", sans-serif;
+            font-weight: 800;
+            font-size: 24px;
+            color: var(--navy);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .search {
+            width: 185px;
+            border: 1px solid #94a3b8;
+            border-radius: 22px;
+            padding: 8px 14px;
+            outline: none;
+            color: var(--text);
+        }
+
+        .header-icon {
+            border: 0;
+            background: transparent;
+            font-size: 18px;
+            color: var(--text);
+        }
+
+        /* ---------------- CONTENT ---------------- */
+
+        .page {
+            display: none;
+            padding-bottom: 60px;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        .hero {
+            min-height: 585px;
+            background:
+                linear-gradient(rgba(0,0,0,.24), rgba(0,0,0,.36)),
+                url("https://lh3.googleusercontent.com/aida-public/AB6AXuDoBAk3BxJJgPa8X901UIdd6MX09-vvGB7E737cvNWCswYPIsG7HWS0qOgPVJWRH_MgM0jTxOqW0Npjp26xnBviZ22UJoWnRu-Fg5JCV4lZB6ILHPwd3rgQEp0D4FnVesC82qAR3C31jc1BSijNA1noiA3zLA0WciuTKfI9MQQdpqezesQYrkUSnP8tbH5mIrF2UahQwmb7ewDQ3gN3s6jO40WyAnVZY-D_3Whg8H6oZRpj11ex6lAK")
+                center / cover no-repeat;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: white;
+        }
+
+        .hero-inner {
+            max-width: 780px;
+            padding: 35px;
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 8px 15px;
+            border-radius: 30px;
+            background: rgba(255,255,255,.18);
+            border: 1px solid rgba(255,255,255,.35);
+            backdrop-filter: blur(8px);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+
+        h1, h2, h3 {
+            font-family: "Montserrat", sans-serif;
+        }
+
+        .hero h1 {
+            font-size: clamp(40px, 6vw, 68px);
+            margin: 24px 0 10px;
+            line-height: 1.02;
+            text-shadow: 0 4px 15px rgba(0,0,0,.35);
+        }
+
+        .hero p {
+            max-width: 650px;
+            margin: 0 auto;
+            font-size: 16px;
+            line-height: 1.65;
+            color: rgba(255,255,255,.93);
+        }
+
+        .hero-actions {
+            margin-top: 27px;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            border: 0;
+            border-radius: 28px;
+            padding: 12px 21px;
+            font-weight: 700;
+            transition: .18s ease;
+        }
+
+        .btn:hover { transform: translateY(-1px); }
+
+        .btn-primary {
+            background: var(--orange);
+            color: white;
+        }
+
+        .btn-primary:hover { background: var(--orange-hover); }
+
+        .btn-blue {
+            background: var(--blue);
+            color: white;
+        }
+
+        .btn-blue:hover { background: #1d4ed8; }
+
+        .btn-light {
+            background: white;
+            color: var(--navy);
+            border: 1px solid var(--border);
+        }
+
+        .btn-danger {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .section {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 42px 28px;
+        }
+
+        .section-heading {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .section-heading h2 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .section-heading p {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .destination-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            grid-template-rows: 180px 180px;
+            gap: 14px;
+        }
+
+        .destination-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 16px;
+            min-height: 180px;
+            background: #0f172a;
+            color: white;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+        }
+
+        .destination-card.large {
+            grid-row: span 2;
+        }
+
+        .destination-card.wide {
+            grid-column: span 2;
+        }
+
+        .destination-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform .5s;
+        }
+
+        .destination-card:hover img {
+            transform: scale(1.04);
+        }
+
+        .destination-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(transparent 35%, rgba(0,0,0,.84));
+            display: flex;
+            flex-direction: column;
+            justify-content: end;
+            padding: 18px;
+        }
+
+        .destination-overlay h3 {
+            margin: 2px 0;
+            font-size: 20px;
+        }
+
+        .destination-overlay p {
+            margin: 3px 0 0;
+            font-size: 12px;
+            color: rgba(255,255,255,.86);
+        }
+
+        /* ---------------- GENERAL PANELS ---------------- */
+
+        .container {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 30px 28px;
+        }
+
+        .panel {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+        }
+
+        .page-title {
+            margin: 0 0 6px;
+            font-size: 31px;
+            color: var(--navy);
+        }
+
+        .page-description {
+            color: var(--muted);
+            margin: 0 0 24px;
+        }
+
+        /* ---------------- FORM / PLANNER ---------------- */
+
+        .wizard {
+            max-width: 850px;
+            margin: 0 auto;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 17px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .field.full {
+            grid-column: 1 / -1;
+        }
+
+        .field label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .field input,
+        .field select,
+        .field textarea {
+            width: 100%;
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            border-radius: 11px;
+            padding: 11px 12px;
+            outline: none;
+            color: var(--text);
+        }
+
+        .field textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+
+        .field input:focus,
+        .field select:focus,
+        .field textarea:focus {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+        }
+
+        .radio-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .radio-card {
+            flex: 1;
+            min-width: 150px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 12px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .radio-card.selected {
+            border-color: var(--blue);
+            background: var(--blue-soft);
+        }
+
+        .radio-card input {
+            margin-right: 6px;
+        }
+
+        .helper {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .form-actions {
+            margin-top: 24px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .error,
+        .success,
+        .loading {
+            display: none;
+            margin-top: 16px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        .error {
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .success {
+            background: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .loading {
+            background: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+        }
+
+        /* ---------------- RESULTS ---------------- */
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 17px;
+        }
+
+        .result-card {
+            border: 1px solid var(--border);
+            border-radius: 17px;
+            overflow: hidden;
+            background: white;
+            box-shadow: 0 5px 20px rgba(15,23,42,.06);
+        }
+
+        .result-card.selected {
+            border: 2px solid var(--blue);
+        }
+
+        .result-card-body {
+            padding: 19px;
+        }
+
+        .result-number {
+            display: inline-flex;
+            width: 29px;
+            height: 29px;
+            align-items: center;
+            justify-content: center;
+            background: var(--navy);
+            color: white;
+            border-radius: 50%;
+            font-weight: 800;
+            font-size: 12px;
+        }
+
+        .result-card h3 {
+            margin: 12px 0 5px;
+            font-size: 20px;
+        }
+
+        .result-country {
+            color: var(--blue);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .result-reason {
+            color: #475569;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .option-meta {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 15px;
+        }
+
+        .meta-box {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 9px;
+        }
+
+        .meta-box small {
+            display: block;
+            color: var(--muted);
+            font-size: 9px;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .meta-box strong {
+            font-size: 12px;
+        }
+
+        .final-panel {
+            margin-top: 20px;
+            border-left: 4px solid var(--orange);
+        }
+
+        .final-panel pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: inherit;
+            color: #334155;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        /* ---------------- BUDGET ---------------- */
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .metric {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 18px;
+        }
+
+        .metric small {
+            color: var(--muted);
+            text-transform: uppercase;
+            font-size: 10px;
+            font-weight: 800;
+        }
+
+        .metric strong {
+            display: block;
+            font-family: "Montserrat", sans-serif;
+            font-size: 24px;
+            margin-top: 5px;
+        }
+
+        .budget-bar {
+            height: 10px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .budget-bar span {
+            display: block;
+            height: 100%;
+            background: var(--blue);
+            width: 0;
+        }
+
+        .expense-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .expense {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: white;
+        }
+
+        .expense-main strong {
+            display: block;
+            font-size: 13px;
+        }
+
+        .expense-main span {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        /* ---------------- STATUS / MAP ---------------- */
+
+        .map-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .map-item {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 12px;
+            font-size: 12px;
+        }
+
+        .map-item strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .coordinates {
+            color: var(--muted);
+            font-family: monospace;
+        }
+
+        /* ---------------- MODAL ---------------- */
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(15,23,42,.65);
+            z-index: 300;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-backdrop.open { display: flex; }
+
+        .modal {
+            width: min(720px, 100%);
+            max-height: 90vh;
+            overflow: auto;
+            background: white;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 25px 70px rgba(0,0,0,.25);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+            align-items: start;
+        }
+
+        .close {
+            border: 0;
+            background: #f1f5f9;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            font-size: 18px;
+        }
+
+        /* ---------------- RESPONSIVE ---------------- */
+
+        @media (max-width: 900px) {
+            .sidebar {
+                width: 72px;
+            }
+
+            .brand-title,
+            .brand-subtitle,
+            .nav-label {
+                display: none;
+            }
+
+            .brand {
+                justify-content: center;
+                padding: 0 0 24px;
+            }
+
+            .nav-button {
+                justify-content: center;
+                padding: 14px 5px;
+            }
+
+            .sidebar-bottom .nav-button {
+                justify-content: center;
+            }
+
+            .main {
+                margin-left: 72px;
+            }
+
+            .destination-grid {
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: 220px 160px 160px;
+            }
+
+            .destination-card.large {
+                grid-column: span 2;
+                grid-row: span 1;
+            }
+
+            .destination-card.wide {
+                grid-column: span 2;
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 650px) {
+            .sidebar {
+                width: 0;
+                overflow: hidden;
+            }
+
+            .main {
+                margin-left: 0;
+            }
+
+            .header {
+                padding: 0 15px;
+            }
+
+            .search {
+                display: none;
+            }
+
+            .container,
+            .section {
+                padding-left: 15px;
+                padding-right: 15px;
+            }
+
+            .form-grid,
+            .result-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .field.full {
+                grid-column: auto;
+            }
+
+            .metrics {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .destination-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                grid-template-rows: repeat(4, 200px);
+            }
+
+            .destination-card.large,
+            .destination-card.wide {
+                grid-column: auto;
+                grid-row: auto;
+            }
+
+            .hero {
+                min-height: 520px;
+            }
+
+            .hero-inner {
+                padding: 20px;
+            }
+
+            .hero h1 {
+                font-size: 42px;
+            }
+
+            .section-heading {
+                align-items: start;
+                flex-direction: column;
+            }
+
+            .option-meta {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+<div class="app">
+
+    <!-- ======================================================
+         SIDEBAR
+    ======================================================= -->
+    <aside class="sidebar">
+        <div class="brand">
+            <img
+                class="brand-avatar"
+                src="https://i.pravatar.cc/100?img=47"
+                alt="Traveler"
+            >
+            <div>
+                <div class="brand-title">Travel<br>Dashboard</div>
+                <div class="brand-subtitle">Modern Explorer</div>
+            </div>
+        </div>
+
+        <nav class="nav">
+            <button class="nav-button active" data-page="home">
+                <span class="nav-icon">⌂</span>
+                <span class="nav-label">HOME</span>
+            </button>
+
+            <button class="nav-button" data-page="planner">
+                <span class="nav-icon">◎</span>
+                <span class="nav-label">PLAN TRIP</span>
+            </button>
+
+            <button class="nav-button" data-page="random">
+                <span class="nav-icon">↝</span>
+                <span class="nav-label">RANDOM EXPOSURE</span>
+            </button>
+
+            <button class="nav-button" data-page="budget">
+                <span class="nav-icon">▣</span>
+                <span class="nav-label">BUDGET MANAGEMENT</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-bottom nav">
+            <button class="nav-button" data-page="planner">
+                <span class="nav-icon">✎</span>
+                <span class="nav-label">EDIT BASIC INFORMATION</span>
+            </button>
+
+            <button class="nav-button" data-page="credentials">
+                <span class="nav-icon">▦</span>
+                <span class="nav-label">USER CREDENTIALS</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- ======================================================
+         MAIN
+    ======================================================= -->
+    <div class="main">
+
+        <header class="header">
+            <div class="header-title">Wanderlust</div>
+
+            <div class="header-actions">
+                <input
+                    id="searchBox"
+                    class="search"
+                    type="search"
+                    placeholder="Search destinations..."
+                >
+                <button class="header-icon" title="Notifications">♧</button>
+                <button class="header-icon" title="Settings">⚙</button>
+            </div>
+        </header>
+
+        <!-- ==================================================
+             HOME
+        =================================================== -->
+        <section id="page-home" class="page active">
+
+            <section class="hero">
+                <div class="hero-inner">
+                    <span class="pill">AI-Powered Travel Planning</span>
+
+                    <h1>Explore the World</h1>
+
+                    <p>
+                        Discover breathtaking destinations, describe the experience
+                        you want, compare AI-generated travel options, and keep the
+                        final trip inside your budget.
+                    </p>
+
+                    <div class="hero-actions">
+                        <button class="btn btn-primary" onclick="showPage('planner')">
+                            START PLANNING →
+                        </button>
+
+                        <button class="btn btn-light" onclick="showPage('random')">
+                            ✦ Surprise Me
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Trending Destinations</h2>
+                        <p>Sample destinations shown on the dashboard.</p>
+                    </div>
+                    <button class="btn btn-light" onclick="showPage('random')">
+                        View All →
+                    </button>
+                </div>
+
+                <div class="destination-grid">
+                    <article class="destination-card large">
+                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuAcUQnNIQAVOKzxqJ9Uo8nnQi46bi7jRdk-CV3WclxyRa0VDg4FqQvd7wvVVfBKHKR6AHbXzXxz4tsD8dRm_HqwAPg7YmuA8x4mzflY9fVJjuZ_3_62DNmhDhGdHYoxGpJH1xAtWQRTqAZRtOf-_St6i2C5QdJFiR85YSmP6mIchTu1-7_tqPPnlXlhBtLdqg9IG46zUCsvg08Qsawlv81e3pjfOo793qYe86UpHsfpyv0pLy2IYHus" alt="Santorini">
+                        <div class="destination-overlay">
+                            <h3>Santorini, Greece</h3>
+                            <p>Stunning sunsets and iconic Aegean architecture.</p>
+                        </div>
+                    </article>
+
+                    <article class="destination-card wide">
+                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBrmnj1frVds0otMxiyQye_LEq1yKEWp2Xjy0TlieuyqMZEEkQnZzlhtDCATADT2B57EW9Vko2DPx3_bYNuHy1UzZz8_1Ytfxt-7is_WM7CTP9xW1RbTK4BHQm6fDiWVaIpUscFAUDtYXmMF3XfQv_RVF92dB5oG2WIBizX3ujZEMHSfUVlgEHaEIeU33k31DXL2ui7yfWTTGZ3N3sRztOOzQqlcXfU3g-KYV8lzbUcBCkrV_Y_U5VD" alt="Kyoto">
+                        <div class="destination-overlay">
+                            <h3>Kyoto, Japan</h3>
+                            <p>Ancient traditions, temples and bamboo forests.</p>
+                        </div>
+                    </article>
+
+                    <article class="destination-card">
+                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuB4G77v1QchjeQuNllOSuXdM7mEHuduXhmmwnYYXqeaPrVhA-enzHg-WbdISwpdZH65Q6Vq5tVrESLWFzQErKxdtw0d_3u2SP5koR2lR6neEZKVDhPwaMaPp8WtA7BA5AYd5nFq3t4e4pOFPi60nmla-CJxyMpvB6opGnbd5A4fBnWeZiwPrYzrokBqKO1CsUDqWY89mQSeifgMxbBNAvOufCo66oQJ5ldo3paJoEAeUzmOdsJZoGUM" alt="Maldives">
+                        <div class="destination-overlay">
+                            <h3>Maldives</h3>
+                            <p>Turquoise lagoons and tropical tranquility.</p>
+                        </div>
+                    </article>
+
+                    <article class="destination-card">
+                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuAq8VEfx5srTwsnHQ20S_7yUuN_9GzfMex6R_cNMxRymtIcx16qQYXQ1kt6lRdb4wKQGs-QxbMRqDLsIpeU3HdsRm0_GjuwCRF1TvqlcH2nFXn2r6PnBWVs06oXjBynZdc1ZfOERvZF0guuNAe79PZTQMWcY18VTBEgdzz1TuTrsyc-grQYI7h3VSxKs0BIf70o8YX11bSn7FUG33iBd88jmrLKTu8HrehhdYcJLn3O5WRhxmSFV2J6" alt="Swiss Alps">
+                        <div class="destination-overlay">
+                            <h3>Swiss Alps</h3>
+                            <p>Mountain landscapes and pristine alpine lakes.</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="section" style="padding-top:0;">
+                <div class="panel">
+                    <h2 style="margin-top:0;">Your AI Travel Workflow</h2>
+                    <div class="option-meta">
+                        <div class="meta-box">
+                            <small>01</small>
+                            <strong>Trip information</strong>
+                        </div>
+                        <div class="meta-box">
+                            <small>02</small>
+                            <strong>Mood analysis</strong>
+                        </div>
+                        <div class="meta-box">
+                            <small>03</small>
+                            <strong>Candidate destinations</strong>
+                        </div>
+                        <div class="meta-box">
+                            <small>04</small>
+                            <strong>Map + research</strong>
+                        </div>
+                        <div class="meta-box">
+                            <small>05</small>
+                            <strong>Compare options</strong>
+                        </div>
+                        <div class="meta-box">
+                            <small>06</small>
+                            <strong>Select → estimate → confirm</strong>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </section>
+
+        <!-- ==================================================
+             PLANNER
+        =================================================== -->
+        <section id="page-planner" class="page">
+            <div class="container">
+
+                <div class="wizard">
+                    <h1 class="page-title">Plan Your Trip</h1>
+                    <p class="page-description">
+                        Enter the basic trip information first. Your information is
+                        sent to Flask and then processed by the backend pipeline.
+                    </p>
+
+                    <div class="panel">
+
+                        <form id="tripForm">
+
+                            <div class="form-grid">
+
+                                <div class="field full">
+                                    <label for="departure_location">
+                                        Where will the trip start from?
+                                    </label>
+                                    <input
+                                        id="departure_location"
+                                        required
+                                        placeholder="Saint John, NB, Canada"
+                                    >
+                                    <span class="helper">
+                                        Your departure country can automatically
+                                        determine the domestic travel country.
+                                    </span>
+                                </div>
+
+                                <div class="field full">
+                                    <label>Where do you want to travel?</label>
+
+                                    <div class="radio-row">
+                                        <label class="radio-card">
+                                            <input
+                                                type="radio"
+                                                name="trip_scope"
+                                                value="domestic"
+                                                checked
+                                            >
+                                            Anywhere in my country
+                                        </label>
+
+                                        <label class="radio-card">
+                                            <input
+                                                type="radio"
+                                                name="trip_scope"
+                                                value="international"
+                                            >
+                                            International / abroad
+                                        </label>
+
+                                        <label class="radio-card">
+                                            <input
+                                                type="radio"
+                                                name="trip_scope"
+                                                value="anywhere"
+                                            >
+                                            Anywhere
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div
+                                    class="field full"
+                                    id="countryField"
+                                >
+                                    <label for="country">
+                                        Which country are you traveling within?
+                                    </label>
+                                    <input
+                                        id="country"
+                                        placeholder="Canada"
+                                    >
+                                    <span id="countryHint" class="helper"></span>
+                                </div>
+
+                                <div class="field">
+                                    <label for="travelers">
+                                        How many people are traveling?
+                                    </label>
+                                    <input
+                                        id="travelers"
+                                        type="number"
+                                        min="1"
+                                        value="2"
+                                        required
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="duration_days">
+                                        How many days?
+                                    </label>
+                                    <input
+                                        id="duration_days"
+                                        type="number"
+                                        min="1"
+                                        value="7"
+                                        required
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="travel_dates">
+                                        When do you want to travel?
+                                    </label>
+                                    <input
+                                        id="travel_dates"
+                                        required
+                                        placeholder="September 18, 2026"
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="maximum_total_travel_time">
+                                        Maximum travel time
+                                    </label>
+                                    <input
+                                        id="maximum_total_travel_time"
+                                        value="no preference"
+                                        placeholder="6 hours / no preference"
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="maximum_distance">
+                                        Maximum travel distance
+                                    </label>
+                                    <input
+                                        id="maximum_distance"
+                                        value="no preference"
+                                        placeholder="1000 km / no preference"
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="transportation_preference">
+                                        Preferred transportation
+                                    </label>
+                                    <select id="transportation_preference">
+                                        <option>no preference</option>
+                                        <option>car</option>
+                                        <option>flight</option>
+                                        <option>train</option>
+                                        <option>bus</option>
+                                    </select>
+                                </div>
+
+                                <div class="field">
+                                    <label for="accommodation_preference">
+                                        Preferred accommodation
+                                    </label>
+                                    <select id="accommodation_preference">
+                                        <option>no preference</option>
+                                        <option>hotel</option>
+                                        <option>Airbnb</option>
+                                        <option>hostel</option>
+                                        <option>resort</option>
+                                        <option>camping</option>
+                                    </select>
+                                </div>
+
+                                <div class="field">
+                                    <label for="safety_requirement">
+                                        Safety requirements / concerns
+                                    </label>
+                                    <input
+                                        id="safety_requirement"
+                                        placeholder="None"
+                                    >
+                                </div>
+
+                                <div class="field">
+                                    <label for="budget">
+                                        Total travel budget (CAD)
+                                    </label>
+                                    <input
+                                        id="budget"
+                                        type="number"
+                                        min="1"
+                                        step="0.01"
+                                        value="5000"
+                                        required
+                                    >
+                                </div>
+
+                                <div class="field full">
+                                    <label for="other">
+                                        Any other trip requirements?
+                                    </label>
+                                    <textarea
+                                        id="other"
+                                        placeholder="None"
+                                    ></textarea>
+                                </div>
+
+                                <div class="field full">
+                                    <label for="user_preferences">
+                                        What do you want from your trip?
+                                    </label>
+                                    <textarea
+                                        id="user_preferences"
+                                        required
+                                        placeholder="I want a beautiful, natural and peaceful experience away from urban crowds..."
+                                    ></textarea>
+                                </div>
+
+                            </div>
+
+                            <div id="plannerError" class="error"></div>
+                            <div id="plannerLoading" class="loading">
+                                AI systems are processing your trip. This can take a
+                                little while because the backend runs multiple planning stages.
+                            </div>
+
+                            <div class="form-actions">
+                                <button
+                                    type="button"
+                                    class="btn btn-light"
+                                    onclick="showPage('home')"
+                                >
+                                    ← Back
+                                </button>
+
+                                <button
+                                    type="submit"
+                                    class="btn btn-primary"
+                                    id="startTripButton"
+                                >
+                                    FIND TRIPS →
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- RESULTS -->
+                <div id="resultsSection" style="display:none; margin-top:30px;">
+                    <div class="results-header">
+                        <div>
+                            <h2 style="margin:0;">Recommended Travel Options</h2>
+                            <p style="margin:5px 0;color:var(--muted);font-size:13px;">
+                                Choose one option if you are satisfied with the current search.
+                                Selection creates a temporary detailed cost estimate.
+                            </p>
+                        </div>
+
+                        <button
+                            class="btn btn-light"
+                            onclick="resetPlanner()"
+                        >
+                            New Search
+                        </button>
+                    </div>
+
+                    <div id="resultGrid" class="result-grid"></div>
+
+                    <div id="selectionPanel" class="panel" style="margin-top:20px; display:none;">
+                        <h3 style="margin-top:0;">Selected Trip</h3>
+                        <p id="selectedTripName" style="font-weight:700;"></p>
+                        <p style="font-size:13px;color:var(--muted);">
+                            The backend will now calculate the detailed estimated
+                            costs for this destination. These costs are temporary until
+                            you confirm the trip.
+                        </p>
+
+                        <div id="selectedTripContent"></div>
+
+                        <div class="form-actions">
+                            <button class="btn btn-light" onclick="clearSelection()">
+                                Choose Another
+                            </button>
+
+                            <button
+                                class="btn btn-primary"
+                                id="confirmTripButton"
+                                onclick="confirmTrip()"
+                            >
+                                CONFIRM TRIP
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================================================
+             RANDOM EXPOSURE
+        =================================================== -->
+        <section id="page-random" class="page">
+            <div class="container">
+                <h1 class="page-title">Random Exposure</h1>
+                <p class="page-description">
+                    Discover destinations outside the current planning workflow.
+                </p>
+
+                <div class="panel">
+                    <div class="hero" style="min-height:390px;border-radius:15px;">
+                        <div class="hero-inner">
+                            <span class="pill">Hidden Gem</span>
+                            <h1 style="font-size:44px;">Waitomo Caves</h1>
+                            <p>
+                                A subterranean New Zealand experience illuminated by
+                                thousands of glowworms.
+                            </p>
+                            <div class="hero-actions">
+                                <button
+                                    class="btn btn-primary"
+                                    onclick="showPage('planner')"
+                                >
+                                    PLAN THIS KIND OF TRIP
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================================================
+             BUDGET
+        =================================================== -->
+        <section id="page-budget" class="page">
+            <div class="container">
+                <h1 class="page-title">Budget Management</h1>
+                <p class="page-description">
+                    Current budget information comes from your active backend trip session.
+                </p>
+
+                <div id="budgetEmpty" class="panel">
+                    <strong>No active trip yet.</strong>
+                    <p style="color:var(--muted);font-size:13px;">
+                        Start a trip first. The budget page will then show the budget,
+                        temporary estimates, and confirmed expenses returned by Flask.
+                    </p>
+                    <button class="btn btn-primary" onclick="showPage('planner')">
+                        START PLANNING
+                    </button>
+                </div>
+
+                <div id="budgetContent" style="display:none;">
+                    <div class="metrics">
+                        <div class="metric">
+                            <small>Total Budget</small>
+                            <strong id="budgetTotal">$0.00</strong>
+                        </div>
+                        <div class="metric">
+                            <small>Spent</small>
+                            <strong id="budgetSpent">$0.00</strong>
+                        </div>
+                        <div class="metric">
+                            <small>Remaining</small>
+                            <strong id="budgetRemaining">$0.00</strong>
+                        </div>
+                        <div class="metric">
+                            <small>Estimated Trip</small>
+                            <strong id="budgetEstimated">$0.00</strong>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h3 style="margin-top:0;">Budget Utilization</h3>
+                        <div class="budget-bar">
+                            <span id="budgetProgress"></span>
+                        </div>
+                        <p id="budgetSummary" style="font-size:12px;color:var(--muted);"></p>
+                    </div>
+
+                    <div class="panel" style="margin-top:18px;">
+                        <h3 style="margin-top:0;">Estimated / Confirmed Costs</h3>
+                        <div id="budgetExpenses" class="expense-list"></div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-light" onclick="refreshStatus()">
+                            ↻ Refresh Status
+                        </button>
+                        <button class="btn btn-danger" onclick="cancelCurrentTrip()">
+                            Cancel Trip
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================================================
+             CREDENTIALS
+        =================================================== -->
+        <section id="page-credentials" class="page">
+            <div class="container">
+                <h1 class="page-title">User Credentials</h1>
+                <p class="page-description">
+                    Travel credentials and digital passes can be connected here later.
+                </p>
+
+                <div class="panel">
+                    <h3 style="margin-top:0;">Travel Vault</h3>
+                    <p style="color:var(--muted);font-size:13px;">
+                        This section is intentionally separate from the AI planning
+                        pipeline. No sensitive credential information is sent to
+                        the travel AI.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>
+
+<!-- ==========================================================
+     DESTINATION MODAL
+=========================================================== -->
+<div id="destinationModal" class="modal-backdrop">
+    <div class="modal">
+        <div class="modal-header">
+            <div>
+                <div id="modalCountry" class="result-country"></div>
+                <h2 id="modalTitle" style="margin:6px 0;"></h2>
+            </div>
+            <button class="close" onclick="closeModal()">×</button>
+        </div>
+        <p id="modalReason" style="color:#475569;line-height:1.65;"></p>
+        <div id="modalMap" class="map-list"></div>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
