@@ -1,7 +1,5 @@
 import json
-import os
 
-from dotenv import load_dotenv
 from ollama import Client
 
 
@@ -9,143 +7,76 @@ class ResearchAgent:
     """
     Local AI travel research agent.
 
-    This agent uses an Ollama model to analyze and organize
-    travel research information.
+    Architecture:
 
-    IMPORTANT ARCHITECTURE:
-
-        TravelAgent
-             ↓
-          main.py
+        main.py
              ↓
         ResearchAgent
              ↓
            Ollama
 
     ResearchAgent does NOT communicate directly with
-    TravelAgent.
+    TravelAgent, MoodAgent, Budget, or MapService.
 
-    main.py is responsible for passing information between
-    the two agents.
+    main.py is responsible for passing information
+    between the systems.
 
-    This class currently performs AI-based analysis of
-    supplied research information.
-
-    Actual web / Maps / hotel / travel API searching can
-    be connected later.
+    The agent researches candidate destinations one
+    at a time to prevent large Ollama responses from
+    being truncated.
     """
 
     def __init__(
         self,
         model="gemma4:latest",
-        host=None
+        host="http://localhost:11434"
     ):
         """
-        Initialize the local Ollama research agent.
-
-        model:
-            Ollama model used for research processing.
-
-        host:
-            Ollama server address.
-
-            If no host is provided, the value from
-            OLLAMA_HOST in the .env file is used.
-
-            If OLLAMA_HOST is not set, the default
-            localhost address is used.
+        Initialize the Ollama research agent.
         """
-
-        # ------------------------------------------------------
-        # Load environment variables.
-        # ------------------------------------------------------
-
-        load_dotenv()
-
-        # ------------------------------------------------------
-        # Get Ollama API key.
-        # ------------------------------------------------------
-
-        api_key = os.getenv(
-            "OLLAMA_API_KEY"
-        )
-
-        if not api_key:
-
-            raise ValueError(
-                "OLLAMA_API_KEY is not set "
-                "in the .env file."
-            )
-
-        # ------------------------------------------------------
-        # Get Ollama model.
-        #
-        # The constructor value takes priority.
-        # ------------------------------------------------------
 
         self.model = model
 
-        # ------------------------------------------------------
-        # Get Ollama host.
-        # ------------------------------------------------------
-
-        if host is None:
-
-            host = os.getenv(
-                "OLLAMA_HOST",
-                "http://localhost:11434"
-            )
-
-        self.host = host
-
-        # ------------------------------------------------------
-        # Create Ollama client.
-        #
-        # The API key is passed through the Authorization
-        # header.
-        # ------------------------------------------------------
-
         self.client = Client(
-            host=self.host,
-            headers={
-                "Authorization": (
-                    f"Bearer {api_key}"
-                )
-            }
+            host=host
         )
 
     # ==========================================================
-    # RESEARCH DESTINATIONS
+    # RESEARCH MULTIPLE DESTINATIONS
     # ==========================================================
 
     def research(
         self,
         destinations,
         preferences=None,
-        budget=None
+        budget=None,
+        map_data=None
     ):
         """
-        Research a list of candidate destinations.
+        Research multiple candidate destinations.
 
-        Information is received from main.py.
+        Each destination is researched separately.
 
-        Example:
+        This prevents Ollama from having to generate one
+        extremely large JSON response.
 
-            destinations = [
-                "Vancouver",
-                "Montreal",
-                "Seattle"
-            ]
+        Parameters:
 
-        preferences contains the output from MoodAgent.
+            destinations:
+                List of destination names.
 
-        budget contains the current Budget state.
+            preferences:
+                MoodAgent output.
 
-        Returns structured research information.
+            budget:
+                Current Budget state.
+
+            map_data:
+                MapTiler results supplied by main.py.
         """
 
         # ------------------------------------------------------
-        # Validate destinations.
+        # Validate destinations
         # ------------------------------------------------------
 
         if not isinstance(
@@ -157,13 +88,12 @@ class ResearchAgent:
             )
 
         if not destinations:
-
             raise ValueError(
                 "At least one destination is required."
             )
 
         # ------------------------------------------------------
-        # Default values.
+        # Default values
         # ------------------------------------------------------
 
         if preferences is None:
@@ -172,104 +102,162 @@ class ResearchAgent:
         if budget is None:
             budget = {}
 
+        if map_data is None:
+            map_data = []
+
         # ------------------------------------------------------
-        # Convert information into JSON.
+        # Research each destination separately
         # ------------------------------------------------------
+
+        researched_destinations = []
+
+        for destination in destinations:
+
+            print(
+                f"\nResearching: {destination}"
+            )
+
+            # --------------------------------------------------
+            # Find matching MapTiler information.
+            # --------------------------------------------------
+
+            location_data = self._find_map_data(
+                destination,
+                map_data
+            )
+
+            # --------------------------------------------------
+            # Research one destination.
+            # --------------------------------------------------
+
+            result = self._research_one(
+                destination=destination,
+                preferences=preferences,
+                budget=budget,
+                map_data=location_data
+            )
+
+            # --------------------------------------------------
+            # Combine MapTiler data with Ollama research.
+            #
+            # MapTiler is authoritative for coordinates.
+            # --------------------------------------------------
+
+            if location_data:
+
+                result["location"] = {
+                    "latitude": location_data.get(
+                        "coordinates",
+                        {}
+                    ).get(
+                        "latitude"
+                    ),
+
+                    "longitude": location_data.get(
+                        "coordinates",
+                        {}
+                    ).get(
+                        "longitude"
+                    ),
+
+                    "place_id": location_data.get(
+                        "place_id"
+                    )
+                }
+
+            researched_destinations.append(
+                result
+            )
+
+        # ------------------------------------------------------
+        # Return one combined research object.
+        # ------------------------------------------------------
+
+        return {
+            "destinations": researched_destinations
+        }
+
+    # ==========================================================
+    # RESEARCH ONE DESTINATION
+    # ==========================================================
+
+    def _research_one(
+        self,
+        destination,
+        preferences,
+        budget,
+        map_data=None
+    ):
+        """
+        Research one destination using Ollama.
+
+        Keeping the request small makes JSON generation
+        much more reliable.
+        """
+
+        if map_data is None:
+            map_data = {}
 
         preferences_json = json.dumps(
             preferences,
-            indent=4
+            indent=2
         )
 
         budget_json = json.dumps(
             budget,
-            indent=4
-        )
-
-        destinations_json = json.dumps(
-            destinations,
-            indent=4
+            indent=2
         )
 
         # ------------------------------------------------------
-        # Build research prompt.
+        # Build a compact prompt.
         # ------------------------------------------------------
 
         prompt = f"""
-You are a local AI travel research assistant.
+You are a travel research assistant.
 
-Your job is to research and organize information about
-candidate travel destinations.
+Research the following candidate destination:
 
-You are NOT the final travel planner.
+DESTINATION:
+{destination}
 
-Another AI agent is responsible for making the final
-travel recommendation.
-
-You have received candidate destinations through the
-application's main controller.
-
-------------------------------------------------------------
-CANDIDATE DESTINATIONS
-------------------------------------------------------------
-
-{destinations_json}
-
-------------------------------------------------------------
-USER TRAVEL PREFERENCES
-------------------------------------------------------------
-
+USER TRAVEL PREFERENCES:
 {preferences_json}
 
-------------------------------------------------------------
-CURRENT TRAVEL BUDGET
-------------------------------------------------------------
-
+CURRENT TRAVEL BUDGET:
 {budget_json}
 
-------------------------------------------------------------
-YOUR RESPONSIBILITIES
-------------------------------------------------------------
-
-For each candidate destination, identify useful information
-that can help the main travel AI evaluate it.
+Your job is to provide useful information that another
+AI travel planner can use to evaluate this destination.
 
 Focus on:
 
-- location
-- country
+- general location
 - natural environment
-- mountains
 - beaches
 - ocean/coast
+- mountains
 - hiking
-- activities
 - nightlife
 - urban environment
-- crowd level
 - relaxation
+- crowd level
+- activities
 - accessibility
-- general travel difficulty
-- approximate travel characteristics
-- potential budget considerations
-- important limitations
+- transportation
+- accommodation
+- budget considerations
+- travel fatigue
+- advantages
+- limitations
+- how well it matches the user's preferences
 
-Compare each destination against the user's preferences.
+IMPORTANT:
 
-Pay particular attention to:
+You are NOT the final travel planner.
 
-1. Wanted preferences.
-2. Avoided preferences.
-3. Current remaining budget.
-4. Potential travel fatigue.
+Do NOT choose the final winner.
 
-------------------------------------------------------------
-IMPORTANT LIMITATIONS
-------------------------------------------------------------
-
-You are currently operating as a local Ollama model.
-
-You do NOT have guaranteed live internet access.
+Do NOT create an itinerary.
 
 Do NOT claim that you performed a live web search.
 
@@ -277,70 +265,67 @@ Do NOT invent current hotel prices.
 
 Do NOT invent current flight prices.
 
-Do NOT invent hotel availability.
-
-Do NOT invent current crowd statistics.
+Do NOT invent availability.
 
 Do NOT claim that information is real-time.
 
-If information is unavailable, clearly mark it as
-"unknown" rather than inventing it.
+If something is unknown, write "unknown".
 
-The application will eventually provide actual web,
-Maps, hotel, flight, and travel API information to you.
-
-------------------------------------------------------------
-OUTPUT
-------------------------------------------------------------
+Keep each description concise.
 
 Return ONLY valid JSON.
 
-Use this structure:
+Use EXACTLY this structure:
 
 {{
-    "destinations": [
-        {{
-            "name": "destination name",
-            "country": "country",
-            "overview": "short overview",
+    "name": "{destination}",
+    "country": "country name or unknown",
+    "overview": "short overview",
 
-            "characteristics": {{
-                "nature": "description",
-                "mountains": "description",
-                "beaches": "description",
-                "ocean_coast": "description",
-                "hiking": "description",
-                "nightlife": "description",
-                "urban": "description",
-                "relaxation": "description",
-                "crowds": "description"
-            }},
+    "characteristics": {{
+        "nature": "short description",
+        "mountains": "short description",
+        "beaches": "short description",
+        "ocean_coast": "short description",
+        "hiking": "short description",
+        "nightlife": "short description",
+        "urban": "short description",
+        "relaxation": "short description",
+        "crowds": "short description"
+    }},
 
-            "activities": [],
+    "activities": [
+        "activity 1",
+        "activity 2",
+        "activity 3"
+    ],
 
-            "accessibility": "description",
+    "accessibility": "short description",
 
-            "budget_notes": "description",
+    "transportation": "short description",
 
-            "fatigue_notes": "description",
+    "accommodation": "short description",
 
-            "advantages": [],
+    "budget_notes": "short description",
 
-            "limitations": []
-        }}
+    "fatigue_notes": "short description",
+
+    "preference_match": "short description",
+
+    "advantages": [
+        "advantage 1",
+        "advantage 2"
+    ],
+
+    "limitations": [
+        "limitation 1",
+        "limitation 2"
     ]
 }}
-
-Do not provide a final ranking.
-
-Do not choose the winner.
-
-Your job is to provide useful research information
-for the main TravelAgent.
 """
 
         # ------------------------------------------------------
-        # Send request to Ollama.
+        # Ask Ollama.
         # ------------------------------------------------------
 
         response = self.client.chat(
@@ -351,7 +336,7 @@ for the main TravelAgent.
                     "role": "system",
                     "content": (
                         "You are a careful travel research "
-                        "assistant. Return only valid JSON."
+                        "assistant. Return ONLY valid JSON."
                     )
                 },
                 {
@@ -364,10 +349,26 @@ for the main TravelAgent.
         )
 
         # ------------------------------------------------------
-        # Extract response.
+        # Extract content.
         # ------------------------------------------------------
 
-        content = response["message"]["content"]
+        try:
+
+            content = response["message"]["content"]
+
+        except (
+            KeyError,
+            TypeError
+        ):
+
+            raise ValueError(
+                f"Ollama returned an unexpected response "
+                f"for {destination}."
+            )
+
+        # ------------------------------------------------------
+        # Parse JSON.
+        # ------------------------------------------------------
 
         try:
 
@@ -375,13 +376,118 @@ for the main TravelAgent.
                 content
             )
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
 
-            raise ValueError(
-                "Ollama returned invalid JSON."
+            print(
+                "\n--- RAW OLLAMA RESPONSE ---"
             )
 
+            print(
+                content
+            )
+
+            raise ValueError(
+                f"Ollama returned invalid JSON for "
+                f"{destination}: {error}"
+            )
+
+        # ------------------------------------------------------
+        # Validate basic structure.
+        # ------------------------------------------------------
+
+        if not isinstance(
+            result,
+            dict
+        ):
+            raise ValueError(
+                f"Ollama returned a non-object JSON "
+                f"response for {destination}."
+            )
+
+        # ------------------------------------------------------
+        # Ensure destination name exists.
+        # ------------------------------------------------------
+
+        result["name"] = destination
+
         return result
+
+    # ==========================================================
+    # FIND MAP DATA
+    # ==========================================================
+
+    def _find_map_data(
+        self,
+        destination,
+        map_data
+    ):
+        """
+        Find the MapTiler result corresponding to a
+        destination.
+
+        MapTiler data is passed through main.py.
+
+        ResearchAgent does not call MapService itself.
+        """
+
+        if not isinstance(
+            map_data,
+            list
+        ):
+            return {}
+
+        destination_lower = (
+            str(destination)
+            .strip()
+            .lower()
+        )
+
+        for location in map_data:
+
+            if not isinstance(
+                location,
+                dict
+            ):
+                continue
+
+            query = str(
+                location.get(
+                    "destination",
+                    ""
+                )
+            ).strip().lower()
+
+            if query == destination_lower:
+
+                return location
+
+        # ------------------------------------------------------
+        # Fallback: partial matching.
+        # ------------------------------------------------------
+
+        for location in map_data:
+
+            if not isinstance(
+                location,
+                dict
+            ):
+                continue
+
+            query = str(
+                location.get(
+                    "destination",
+                    ""
+                )
+            ).strip().lower()
+
+            if (
+                destination_lower in query
+                or query in destination_lower
+            ):
+
+                return location
+
+        return {}
 
     # ==========================================================
     # RESEARCH ONE DESTINATION
@@ -391,24 +497,21 @@ for the main TravelAgent.
         self,
         destination,
         preferences=None,
-        budget=None
+        budget=None,
+        map_data=None
     ):
         """
-        Convenience method for researching a single
-        destination.
-
-        Internally uses research() so the application's
-        research format remains consistent.
+        Research a single destination.
         """
 
-        result = self.research(
+        return self.research(
             destinations=[
                 destination
             ],
 
             preferences=preferences,
 
-            budget=budget
-        )
+            budget=budget,
 
-        return result
+            map_data=map_data
+        )

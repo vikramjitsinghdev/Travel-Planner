@@ -3,28 +3,46 @@ import re
 
 class MoodKeywords:
     """
-    Helper class for the MoodAgent.
+    Deterministic vocabulary and normalization helper.
 
-    This class does NOT interpret the user's request.
+    This class does NOT understand the user's overall sentence.
 
-    Groq/MoodAgent remains responsible for understanding
-    the user's language.
+    MoodAgent/Groq is responsible for:
+        - understanding context
+        - understanding negation
+        - deciding wanted vs avoided
 
-    MoodKeywords is only responsible for:
-        - storing supported mood categories
-        - storing useful keyword/synonym vocabulary
-        - finding keyword matches in text
-        - validating AI-generated moods
-        - normalizing mood names
+    MoodKeywords is responsible for:
+        - canonical mood vocabulary
+        - synonyms
+        - phrase normalization
+        - validating moods
+        - mapping phrases to canonical moods
+        - basic keyword detection
+        - preserving separation between mood and constraints
+
+    It does NOT:
+        - recommend destinations
+        - search the internet
+        - calculate prices
+        - score destinations
+        - communicate with TravelAgent
+        - communicate with ResearchAgent
+        - communicate with MapService
     """
 
     def __init__(self):
 
+        # ======================================================
+        # CANONICAL MOOD VOCABULARY
+        # ======================================================
+
         self.mood_keywords = {
 
-            # ==================================================
-            # NATURE
-            # ==================================================
+            # --------------------------------------------------
+            # NATURE / ENVIRONMENT
+            # --------------------------------------------------
+
             "nature": [
                 "nature",
                 "natural",
@@ -63,317 +81,33 @@ class MoodKeywords:
                 "nature reserves",
                 "pristine nature",
                 "untouched nature",
+                "beautiful scenery",
+                "beautiful landscape",
             ],
 
-            # ==================================================
-            # ADVENTURE
-            # ==================================================
-            "adventure": [
-                "adventure",
-                "adventurous",
-                "exciting",
-                "excitement",
-                "thrill",
-                "thrilling",
-                "adrenaline",
-                "extreme",
-                "explore",
-                "exploring",
-                "exploration",
-                "expedition",
-                "expeditions",
-                "action",
-                "action-packed",
-                "action packed",
-                "extreme activities",
-                "extreme sports",
-                "adventure activities",
-                "adventure travel",
-                "off-road",
-                "off road",
+            "mountains": [
+                "mountain",
+                "mountains",
+                "mountainous",
+                "mountain trip",
+                "mountain vacation",
+                "mountain getaway",
+                "mountain views",
+                "mountain scenery",
+                "mountain landscape",
+                "alpine",
+                "alps",
+                "rockies",
+                "rocky mountains",
+                "highlands",
+                "peaks",
+                "summits",
+                "mountain villages",
+                "mountain town",
+                "hills",
+                "rolling hills",
             ],
 
-            # ==================================================
-            # RELAXATION
-            # ==================================================
-            "relaxation": [
-                "relax",
-                "relaxed",
-                "relaxing",
-                "rest",
-                "restful",
-                "unwind",
-                "unwinding",
-                "peace",
-                "peaceful",
-                "calm",
-                "calming",
-                "tranquil",
-                "tranquility",
-                "serene",
-                "serenity",
-                "rejuvenating",
-                "slow-paced",
-                "slow paced",
-                "laid-back",
-                "laid back",
-                "stress-free",
-                "stress free",
-                "wellness",
-                "spa",
-                "retreat",
-                "meditation",
-                "mindfulness",
-                "peace and quiet",
-            ],
-
-            # ==================================================
-            # COMFORT
-            # ==================================================
-            "comfort": [
-                "comfort",
-                "comfortable",
-                "comforting",
-                "cozy",
-                "cosy",
-                "convenient",
-                "convenience",
-                "pleasant",
-                "welcoming",
-                "hassle-free",
-                "hassle free",
-                "easy travel",
-                "easy trip",
-                "comfortable stay",
-                "good accommodation",
-                "nice accommodation",
-                "comfortable accommodation",
-            ],
-
-            # ==================================================
-            # CULTURE
-            # ==================================================
-            "culture": [
-                "culture",
-                "cultural",
-                "cultural experience",
-                "local culture",
-                "tradition",
-                "traditions",
-                "traditional",
-                "local traditions",
-                "local life",
-                "local lifestyle",
-                "authentic",
-                "authenticity",
-                "local people",
-                "festivals",
-                "heritage",
-                "arts",
-                "artistic",
-            ],
-
-            # ==================================================
-            # HISTORY
-            # ==================================================
-            "history": [
-                "history",
-                "historical",
-                "historic",
-                "ancient",
-                "ancient history",
-                "ancient ruins",
-                "ruins",
-                "archaeology",
-                "archaeological",
-                "historical sites",
-                "historic sites",
-                "historical places",
-                "historic places",
-                "historical landmarks",
-                "historic landmarks",
-                "battlefields",
-                "fortresses",
-                "history tour",
-                "historical tour",
-            ],
-
-            # ==================================================
-            # FOOD
-            # ==================================================
-            "food": [
-                "food",
-                "cuisine",
-                "culinary",
-                "dining",
-                "restaurant",
-                "restaurants",
-                "foodie",
-                "foodies",
-                "gastronomy",
-                "local food",
-                "local cuisine",
-                "street food",
-                "food tasting",
-                "food tour",
-                "food market",
-                "local dishes",
-                "traditional food",
-                "fine dining",
-                "cafe",
-                "cafes",
-                "bakery",
-                "bakeries",
-            ],
-
-            # ==================================================
-            # NIGHTLIFE
-            # ==================================================
-            "nightlife": [
-                "nightlife",
-                "night life",
-                "party",
-                "partying",
-                "club",
-                "clubs",
-                "nightclub",
-                "nightclubs",
-                "night club",
-                "night clubs",
-                "bar",
-                "bars",
-                "pub",
-                "pubs",
-                "drinking",
-                "late night",
-                "late-night",
-                "social scene",
-                "dancing",
-                "dj",
-                "bar hopping",
-                "party scene",
-                "club scene",
-            ],
-
-            # ==================================================
-            # LUXURY
-            # ==================================================
-            "luxury": [
-                "luxury",
-                "luxurious",
-                "premium",
-                "high-end",
-                "high end",
-                "upscale",
-                "five-star",
-                "five star",
-                "exclusive",
-                "lavish",
-                "indulgent",
-                "pampering",
-                "first-class",
-                "first class",
-                "business class",
-                "private villa",
-                "private resort",
-            ],
-
-            # ==================================================
-            # ROMANCE
-            # ==================================================
-            "romance": [
-                "romance",
-                "romantic",
-                "romantic getaway",
-                "romantic vacation",
-                "couple",
-                "couples",
-                "honeymoon",
-                "anniversary",
-                "intimate",
-                "couples retreat",
-                "romantic dinner",
-                "romantic hotel",
-                "romantic resort",
-                "date night",
-            ],
-
-            # ==================================================
-            # FAMILY
-            # ==================================================
-            "family": [
-                "family",
-                "families",
-                "family trip",
-                "family vacation",
-                "family holiday",
-                "family-friendly",
-                "family friendly",
-                "kid-friendly",
-                "kid friendly",
-                "child-friendly",
-                "child friendly",
-                "children",
-                "kids",
-                "family activities",
-                "family attractions",
-                "family resort",
-                "family accommodation",
-            ],
-
-            # ==================================================
-            # SOLO
-            # ==================================================
-            "solo": [
-                "solo",
-                "solo travel",
-                "solo trip",
-                "solo vacation",
-                "solo holiday",
-                "travel alone",
-                "traveling alone",
-                "travelling alone",
-                "alone",
-                "on my own",
-                "by myself",
-                "independent travel",
-                "independent traveler",
-                "independent traveller",
-                "solo traveler",
-                "solo traveller",
-                "explore alone",
-            ],
-
-            # ==================================================
-            # PHOTOGRAPHY
-            # ==================================================
-            "photography": [
-                "photography",
-                "photographer",
-                "photo",
-                "photos",
-                "pictures",
-                "photogenic",
-                "instagrammable",
-                "instagramable",
-                "instagram-worthy",
-                "instagram worthy",
-                "photo opportunities",
-                "photo spots",
-                "photography spots",
-                "scenic photos",
-                "beautiful photos",
-                "sunrise photography",
-                "sunset photography",
-                "landscape photography",
-                "wildlife photography",
-                "travel photography",
-                "architecture photography",
-            ],
-
-            # ==================================================
-            # BEACHES
-            # ==================================================
             "beaches": [
                 "beach",
                 "beaches",
@@ -398,62 +132,61 @@ class MoodKeywords:
                 "ocean front",
                 "beach resort",
                 "seaside resort",
+                "ocean",
+                "ocean experience",
+                "ocean view",
+                "ocean views",
             ],
 
-            # ==================================================
-            # MOUNTAINS
-            # ==================================================
-            "mountains": [
-                "mountain",
-                "mountains",
-                "mountainous",
-                "mountain trip",
-                "mountain vacation",
-                "mountain getaway",
-                "mountain views",
-                "mountain scenery",
-                "mountain landscape",
-                "alpine",
-                "alps",
-                "rockies",
-                "rocky mountains",
-                "highlands",
-                "peaks",
-                "summits",
-                "mountain villages",
-                "mountain town",
-                "hills",
-                "rolling hills",
+            "wildlife": [
+                "wildlife",
+                "wild animals",
+                "animals",
+                "animal watching",
+                "animal spotting",
+                "wildlife watching",
+                "wildlife viewing",
+                "safari",
+                "safaris",
+                "bird watching",
+                "birdwatching",
+                "whale watching",
+                "whales",
+                "dolphin watching",
+                "dolphins",
+                "marine life",
+                "sea life",
+                "wildlife reserve",
             ],
 
-            # ==================================================
-            # SNOW
-            # ==================================================
-            "snow": [
-                "snow",
-                "snowy",
-                "snowfall",
-                "ski",
-                "skiing",
-                "snowboarding",
-                "winter sports",
-                "winter activities",
-                "winter wonderland",
-                "snowy mountains",
-                "snow-covered",
-                "snow covered",
-                "ice skating",
-                "frozen lakes",
-                "winter vacation",
-                "winter holiday",
-                "winter trip",
-                "snow resort",
-                "ski resort",
+            "remote": [
+                "remote",
+                "remote place",
+                "remote places",
+                "remote destination",
+                "remote destinations",
+                "secluded",
+                "seclusion",
+                "isolated",
+                "isolation",
+                "off-grid",
+                "off grid",
+                "off the grid",
+                "off-the-beaten-path",
+                "off the beaten path",
+                "hidden gem",
+                "hidden gems",
+                "undiscovered",
+                "less touristy",
+                "away from tourists",
+                "away from crowds",
+                "wilderness getaway",
             ],
 
-            # ==================================================
-            # HIKING
-            # ==================================================
+            # --------------------------------------------------
+            # ACTIVITIES
+            # --------------------------------------------------
+
             "hiking": [
                 "hiking",
                 "hike",
@@ -477,9 +210,6 @@ class MoodKeywords:
                 "trekking route",
             ],
 
-            # ==================================================
-            # WATER SPORTS
-            # ==================================================
             "water_sports": [
                 "water sports",
                 "watersports",
@@ -512,39 +242,213 @@ class MoodKeywords:
                 "fishing",
             ],
 
-            # ==================================================
-            # SHOPPING
-            # ==================================================
-            "shopping": [
-                "shopping",
-                "shop",
-                "shops",
-                "shopper",
-                "shoppers",
-                "shopping district",
-                "shopping mall",
-                "mall",
-                "malls",
-                "market",
-                "markets",
-                "street markets",
-                "local markets",
-                "souvenirs",
-                "souvenir shopping",
-                "boutique",
-                "boutiques",
-                "designer stores",
-                "designer shopping",
-                "fashion",
-                "fashion district",
-                "outlets",
-                "local crafts",
-                "craft markets",
+            "adventure": [
+                "adventure",
+                "adventurous",
+                "exciting",
+                "excitement",
+                "thrill",
+                "thrilling",
+                "adrenaline",
+                "extreme",
+                "explore",
+                "exploring",
+                "exploration",
+                "expedition",
+                "expeditions",
+                "action",
+                "action-packed",
+                "action packed",
+                "extreme activities",
+                "extreme sports",
+                "adventure activities",
+                "adventure travel",
+                "off-road",
+                "off road",
             ],
 
-            # ==================================================
-            # ARCHITECTURE
-            # ==================================================
+            "road_trips": [
+                "road trip",
+                "road trips",
+                "roadtrip",
+                "roadtrips",
+                "driving trip",
+                "driving trips",
+                "self-drive",
+                "self drive",
+                "rental car",
+                "rent a car",
+                "car trip",
+                "car trips",
+                "scenic drive",
+                "scenic drives",
+                "road journey",
+                "road journeys",
+                "long drive",
+                "cross-country drive",
+                "cross country drive",
+            ],
+
+            "photography": [
+                "photography",
+                "photographer",
+                "photo",
+                "photos",
+                "pictures",
+                "photogenic",
+                "instagrammable",
+                "instagramable",
+                "instagram-worthy",
+                "instagram worthy",
+                "photo opportunities",
+                "photo spots",
+                "photography spots",
+                "scenic photos",
+                "beautiful photos",
+                "sunrise photography",
+                "sunset photography",
+                "landscape photography",
+                "wildlife photography",
+                "travel photography",
+                "architecture photography",
+            ],
+
+            # --------------------------------------------------
+            # EXPERIENCE
+            # --------------------------------------------------
+
+            "relaxation": [
+                "relax",
+                "relaxed",
+                "relaxing",
+                "rest",
+                "restful",
+                "unwind",
+                "unwinding",
+                "peace",
+                "peaceful",
+                "calm",
+                "calming",
+                "tranquil",
+                "tranquility",
+                "serene",
+                "serenity",
+                "rejuvenating",
+                "slow-paced",
+                "slow paced",
+                "laid-back",
+                "laid back",
+                "stress-free",
+                "stress free",
+                "wellness",
+                "spa",
+                "retreat",
+                "meditation",
+                "mindfulness",
+                "peace and quiet",
+            ],
+
+            "quiet": [
+                "quiet",
+                "quiet place",
+                "quiet places",
+                "quiet destination",
+                "quiet destinations",
+                "peaceful",
+                "peace",
+                "peace and quiet",
+                "peaceful getaway",
+                "peaceful vacation",
+                "peaceful trip",
+                "peaceful environment",
+                "peaceful surroundings",
+                "calm",
+                "calming",
+                "calm destination",
+                "calm environment",
+                "calm atmosphere",
+                "tranquil",
+                "tranquility",
+                "serene",
+                "serenity",
+                "uncrowded",
+                "not crowded",
+                "few people",
+                "fewer people",
+                "low-key",
+                "low key",
+                "laid-back",
+                "laid back",
+                "silent",
+                "silence",
+            ],
+
+            "comfort": [
+                "comfort",
+                "comfortable",
+                "comforting",
+                "cozy",
+                "cosy",
+                "convenient",
+                "convenience",
+                "pleasant",
+                "welcoming",
+                "hassle-free",
+                "hassle free",
+                "easy travel",
+                "easy trip",
+                "comfortable stay",
+                "good accommodation",
+                "nice accommodation",
+                "comfortable accommodation",
+            ],
+
+            # --------------------------------------------------
+            # CULTURE / HISTORY
+            # --------------------------------------------------
+
+            "culture": [
+                "culture",
+                "cultural",
+                "cultural experience",
+                "local culture",
+                "tradition",
+                "traditions",
+                "traditional",
+                "local traditions",
+                "local life",
+                "local lifestyle",
+                "authentic",
+                "authenticity",
+                "local people",
+                "festivals",
+                "heritage",
+                "arts",
+                "artistic",
+            ],
+
+            "history": [
+                "history",
+                "historical",
+                "historic",
+                "ancient",
+                "ancient history",
+                "ancient ruins",
+                "ruins",
+                "archaeology",
+                "archaeological",
+                "historical sites",
+                "historic sites",
+                "historical places",
+                "historic places",
+                "historical landmarks",
+                "historic landmarks",
+                "battlefields",
+                "fortresses",
+                "history tour",
+                "historical tour",
+            ],
+
             "architecture": [
                 "architecture",
                 "architectural",
@@ -582,9 +486,6 @@ class MoodKeywords:
                 "cathedrals",
             ],
 
-            # ==================================================
-            # MUSEUMS
-            # ==================================================
             "museums": [
                 "museum",
                 "museums",
@@ -606,112 +507,235 @@ class MoodKeywords:
                 "historical museum",
             ],
 
-            # ==================================================
-            # WILDLIFE
-            # ==================================================
-            "wildlife": [
-                "wildlife",
-                "wild animals",
-                "animals",
-                "animal watching",
-                "animal spotting",
-                "wildlife watching",
-                "wildlife viewing",
-                "safari",
-                "safaris",
-                "bird watching",
-                "birdwatching",
-                "whale watching",
-                "whales",
-                "dolphin watching",
-                "dolphins",
-                "marine life",
-                "sea life",
-                "nature reserve",
-                "wildlife reserve",
+            "food": [
+                "food",
+                "cuisine",
+                "culinary",
+                "dining",
+                "restaurant",
+                "restaurants",
+                "foodie",
+                "foodies",
+                "gastronomy",
+                "local food",
+                "local cuisine",
+                "street food",
+                "food tasting",
+                "food tour",
+                "food market",
+                "local dishes",
+                "traditional food",
+                "fine dining",
+                "cafe",
+                "cafes",
+                "bakery",
+                "bakeries",
             ],
 
-            # ==================================================
-            # SPIRITUALITY
-            # ==================================================
-            "spirituality": [
-                "spirituality",
-                "spiritual",
-                "spiritual trip",
-                "spiritual travel",
-                "spiritual retreat",
-                "religion",
-                "religious",
-                "religious sites",
-                "pilgrimage",
-                "pilgrimages",
-                "temple visit",
-                "monastery",
-                "monasteries",
-                "sacred sites",
-                "sacred places",
-                "mindfulness",
-                "inner peace",
-                "reflection",
+            # --------------------------------------------------
+            # SOCIAL / TRIP TYPE
+            # --------------------------------------------------
+
+            "nightlife": [
+                "nightlife",
+                "night life",
+                "party",
+                "partying",
+                "club",
+                "clubs",
+                "nightclub",
+                "nightclubs",
+                "night club",
+                "night clubs",
+                "bar",
+                "bars",
+                "pub",
+                "pubs",
+                "drinking",
+                "late night",
+                "late-night",
+                "social scene",
+                "dancing",
+                "dj",
+                "bar hopping",
+                "party scene",
+                "club scene",
             ],
 
-            # ==================================================
-            # ROAD TRIPS
-            # ==================================================
-            "road_trips": [
-                "road trip",
-                "road trips",
-                "roadtrip",
-                "roadtrips",
-                "driving trip",
-                "driving trips",
-                "drive",
-                "driving",
-                "self-drive",
-                "self drive",
-                "rental car",
-                "rent a car",
-                "car trip",
-                "car trips",
-                "scenic drive",
-                "scenic drives",
-                "road journey",
-                "road journeys",
-                "long drive",
-                "cross-country drive",
-                "cross country drive",
+            "shopping": [
+                "shopping",
+                "shop",
+                "shops",
+                "shopper",
+                "shoppers",
+                "shopping district",
+                "shopping mall",
+                "mall",
+                "malls",
+                "market",
+                "markets",
+                "street markets",
+                "local markets",
+                "souvenirs",
+                "souvenir shopping",
+                "boutique",
+                "boutiques",
+                "designer stores",
+                "designer shopping",
+                "fashion",
+                "fashion district",
+                "outlets",
+                "local crafts",
+                "craft markets",
             ],
 
-            # ==================================================
-            # REMOTE
-            # ==================================================
-            "remote": [
-                "remote",
-                "remote place",
-                "remote places",
-                "remote destination",
-                "remote destinations",
-                "secluded",
-                "seclusion",
-                "isolated",
-                "isolation",
-                "off-grid",
-                "off grid",
-                "off the grid",
-                "off-the-beaten-path",
-                "off the beaten path",
-                "hidden gem",
-                "hidden gems",
-                "undiscovered",
-                "less touristy",
-                "away from tourists",
-                "away from crowds",
-                "wilderness getaway",
+            "luxury": [
+                "luxury",
+                "luxurious",
+                "premium",
+                "high-end",
+                "high end",
+                "upscale",
+                "five-star",
+                "five star",
+                "exclusive",
+                "lavish",
+                "indulgent",
+                "pampering",
+                "first-class",
+                "first class",
+                "business class",
+                "private villa",
+                "private resort",
             ],
 
-            # ==================================================
-            # URBAN
-            # ==================================================
+            "romance": [
+                "romance",
+                "romantic",
+                "romantic getaway",
+                "romantic vacation",
+                "couple",
+                "couples",
+                "honeymoon",
+                "anniversary",
+                "intimate",
+                "couples retreat",
+                "romantic dinner",
+                "romantic hotel",
+                "romantic resort",
+                "date night",
+            ],
+
+            "family": [
+                "family",
+                "families",
+                "family trip",
+                "family vacation",
+                "family holiday",
+                "family-friendly",
+                "family friendly",
+                "kid-friendly",
+                "kid friendly",
+                "child-friendly",
+                "child friendly",
+                "children",
+                "kids",
+                "family activities",
+                "family attractions",
+                "family resort",
+                "family accommodation",
+            ],
+
+            "solo": [
+                "solo",
+                "solo travel",
+                "solo trip",
+                "solo vacation",
+                "solo holiday",
+                "travel alone",
+                "traveling alone",
+                "travelling alone",
+                "alone",
+                "on my own",
+                "by myself",
+                "independent travel",
+                "independent traveler",
+                "independent traveller",
+                "solo traveler",
+                "solo traveller",
+                "explore alone",
+            ],
+
+            # --------------------------------------------------
+            # WEATHER
+            # --------------------------------------------------
+
+            "snow": [
+                "snow",
+                "snowy",
+                "snowfall",
+                "ski",
+                "skiing",
+                "snowboarding",
+                "winter sports",
+                "winter activities",
+                "winter wonderland",
+                "snowy mountains",
+                "snow-covered",
+                "snow covered",
+                "ice skating",
+                "frozen lakes",
+                "winter vacation",
+                "winter holiday",
+                "winter trip",
+                "snow resort",
+                "ski resort",
+            ],
+
+            "warm_weather": [
+                "warm",
+                "warm weather",
+                "warm climate",
+                "warm temperatures",
+                "hot",
+                "hot weather",
+                "hot climate",
+                "hot temperatures",
+                "sunny",
+                "sunny weather",
+                "sunshine",
+                "tropical",
+                "tropical weather",
+                "tropical climate",
+                "tropical destination",
+                "summer weather",
+                "summer climate",
+            ],
+
+            "cold_weather": [
+                "cold",
+                "cold weather",
+                "cold climate",
+                "cold temperatures",
+                "cool",
+                "cool weather",
+                "cool climate",
+                "cool temperatures",
+                "chilly",
+                "freezing",
+                "frozen",
+                "icy",
+                "winter",
+                "winter weather",
+                "winter climate",
+                "winter destination",
+                "snowy weather",
+            ],
+
+            # --------------------------------------------------
+            # URBAN / CROWD
+            # --------------------------------------------------
+
             "urban": [
                 "urban",
                 "urban area",
@@ -746,9 +770,6 @@ class MoodKeywords:
                 "contemporary cities",
             ],
 
-            # ==================================================
-            # CROWDED
-            # ==================================================
             "crowded": [
                 "crowded",
                 "crowd",
@@ -775,97 +796,13 @@ class MoodKeywords:
                 "very popular",
                 "popular destination",
                 "popular destinations",
-                "lively",
-                "vibrant",
-            ],
-
-            # ==================================================
-            # QUIET
-            # ==================================================
-            "quiet": [
-                "quiet",
-                "quiet place",
-                "quiet places",
-                "quiet destination",
-                "quiet destinations",
-                "peaceful",
-                "peace",
-                "peace and quiet",
-                "peaceful getaway",
-                "peaceful vacation",
-                "peaceful trip",
-                "peaceful environment",
-                "peaceful surroundings",
-                "calm",
-                "calming",
-                "calm destination",
-                "calm environment",
-                "calm atmosphere",
-                "tranquil",
-                "tranquility",
-                "serene",
-                "serenity",
-                "uncrowded",
-                "not crowded",
-                "few people",
-                "fewer people",
-                "low-key",
-                "low key",
-                "laid-back",
-                "laid back",
-                "silent",
-                "silence",
-                "secluded",
-            ],
-
-            # ==================================================
-            # WARM WEATHER
-            # ==================================================
-            "warm_weather": [
-                "warm",
-                "warm weather",
-                "warm climate",
-                "warm temperatures",
-                "hot",
-                "hot weather",
-                "hot climate",
-                "hot temperatures",
-                "sunny",
-                "sunny weather",
-                "sunshine",
-                "tropical",
-                "tropical weather",
-                "tropical climate",
-                "tropical destination",
-                "summer weather",
-                "summer climate",
-            ],
-
-            # ==================================================
-            # COLD WEATHER
-            # ==================================================
-            "cold_weather": [
-                "cold",
-                "cold weather",
-                "cold climate",
-                "cold temperatures",
-                "cool",
-                "cool weather",
-                "cool climate",
-                "cool temperatures",
-                "chilly",
-                "freezing",
-                "frozen",
-                "icy",
-                "winter",
-                "winter weather",
-                "winter climate",
-                "winter destination",
-                "snowy weather",
             ],
         }
 
-        # Common expressions indicating rejection.
+        # ======================================================
+        # BASIC NEGATION VOCABULARY
+        # ======================================================
+
         self.negation_phrases = [
             "do not want",
             "don't want",
@@ -896,16 +833,89 @@ class MoodKeywords:
             "hates",
             "dislike",
             "dislikes",
+            "minimize",
+            "less",
+            "fewer",
+            "rather not",
         ]
 
+        # ======================================================
+        # DIRECT SEMANTIC NORMALIZATION
+        # ======================================================
+        #
+        # Used by MoodAgent after Groq has already decided
+        # whether the phrase is wanted or avoided.
+        #
+        # ======================================================
+
+        self.semantic_mappings = {
+
+            "natural": ["nature"],
+            "natural beauty": ["nature"],
+            "beautiful nature": ["nature"],
+            "scenic nature": ["nature"],
+            "beautiful scenery": ["nature"],
+            "beautiful landscape": ["nature"],
+            "scenic": ["nature"],
+
+            "peaceful": ["quiet", "relaxation"],
+            "peace": ["quiet", "relaxation"],
+            "tranquil": ["quiet", "relaxation"],
+            "tranquility": ["quiet", "relaxation"],
+            "serene": ["quiet", "relaxation"],
+            "serenity": ["quiet", "relaxation"],
+
+            "relaxing": ["relaxation"],
+            "relaxed": ["relaxation"],
+            "relax": ["relaxation"],
+            "restful": ["relaxation"],
+
+            "mountain": ["mountains"],
+            "mountainous": ["mountains"],
+            "alpine": ["mountains"],
+
+            "hiking trails": ["hiking"],
+            "trekking": ["hiking"],
+            "trek": ["hiking"],
+
+            "city": ["urban"],
+            "cities": ["urban"],
+            "urban areas": ["urban"],
+            "urban environments": ["urban"],
+
+            "busy cities": ["urban", "crowded"],
+            "crowded cities": ["urban", "crowded"],
+            "crowded areas": ["crowded"],
+            "crowded places": ["crowded"],
+            "crowded tourist areas": ["crowded"],
+
+            "night life": ["nightlife"],
+
+            "ocean": ["beaches"],
+            "ocean experience": ["beaches"],
+            "oceanfront": ["beaches"],
+            "coastal": ["beaches"],
+
+            "party atmosphere": ["nightlife"],
+            "party scene": ["nightlife"],
+        }
+
     # ==========================================================
-    # NORMALIZATION
+    # NORMALIZE TEXT
     # ==========================================================
 
     def normalize(self, text):
         """
-        Normalize text for searching and comparison.
+        Normalize text for deterministic comparison.
+
+        Handles:
+            - capitalization
+            - hyphens
+            - repeated spaces
         """
+
+        if text is None:
+            return ""
 
         text = str(text).lower().strip()
 
@@ -920,12 +930,12 @@ class MoodKeywords:
         return text
 
     # ==========================================================
-    # MOOD CATEGORIES
+    # GET SUPPORTED MOODS
     # ==========================================================
 
     def get_moods(self):
         """
-        Return all supported canonical mood categories.
+        Return all canonical mood categories.
         """
 
         return list(
@@ -933,12 +943,12 @@ class MoodKeywords:
         )
 
     # ==========================================================
-    # KEYWORDS FOR MOOD
+    # GET KEYWORDS
     # ==========================================================
 
     def get_keywords(self, mood):
         """
-        Return keywords belonging to a specific mood.
+        Return all keywords belonging to a mood.
         """
 
         mood = self.normalize(mood)
@@ -949,13 +959,13 @@ class MoodKeywords:
         )
 
     # ==========================================================
-    # VALIDATE AI MOOD
+    # VALIDATE MOOD
     # ==========================================================
 
     def is_valid_mood(self, mood):
         """
-        Check whether an AI-generated mood is supported
-        by the application's mood vocabulary.
+        Determine whether a value is a supported canonical
+        mood.
         """
 
         mood = self.normalize(mood)
@@ -968,45 +978,106 @@ class MoodKeywords:
 
     def validate_mood_list(self, moods):
         """
-        Clean a list of moods returned by the AI.
-
-        Invalid moods are removed.
-        Duplicate moods are removed.
+        Remove invalid and duplicate moods.
         """
 
-        if not isinstance(moods, list):
+        if not isinstance(
+            moods,
+            list
+        ):
             return []
 
         valid = []
 
         for mood in moods:
 
-            mood = self.normalize(mood)
+            mood = self.normalize(
+                mood
+            )
 
             if (
                 self.is_valid_mood(mood)
                 and mood not in valid
             ):
-                valid.append(mood)
+
+                valid.append(
+                    mood
+                )
 
         return valid
+
+    # ==========================================================
+    # NORMALIZE MOOD PHRASE
+    # ==========================================================
+
+    def normalize_mood_phrase(self, phrase):
+        """
+        Convert a phrase into canonical mood categories.
+
+        Example:
+
+            "beautiful nature"
+                ->
+            ["nature"]
+
+            "peaceful"
+                ->
+            ["quiet", "relaxation"]
+        """
+
+        phrase = self.normalize(
+            phrase
+        )
+
+        if not phrase:
+            return []
+
+        # Direct canonical mood.
+        if self.is_valid_mood(
+            phrase
+        ):
+
+            return [phrase]
+
+        # Semantic mapping.
+        if phrase in self.semantic_mappings:
+
+            return list(
+                self.semantic_mappings[
+                    phrase
+                ]
+            )
+
+        # Vocabulary search.
+        return self.find_moods(
+            phrase
+        )
 
     # ==========================================================
     # SEARCH KEYWORD
     # ==========================================================
 
-    def search_keyword(self, text, keyword):
+    def search_keyword(
+        self,
+        text,
+        keyword
+    ):
         """
-        Check whether a keyword appears in text.
+        Check whether a keyword occurs in text.
 
-        Handles:
-            - capitalization
-            - hyphen differences
-            - whole-word matching
+        Uses whole-word matching.
         """
 
-        text = self.normalize(text)
-        keyword = self.normalize(keyword)
+        text = self.normalize(
+            text
+        )
+
+        keyword = self.normalize(
+            keyword
+        )
+
+        if not text or not keyword:
+            return False
 
         pattern = (
             rf"(?<!\w)"
@@ -1022,18 +1093,18 @@ class MoodKeywords:
         )
 
     # ==========================================================
-    # FIND MOODS IN USER INPUT
+    # FIND MOODS
     # ==========================================================
 
     def find_moods(self, text):
         """
-        Find mood categories that have explicit keyword
-        matches inside the user's input.
+        Find canonical moods represented by text.
 
         IMPORTANT:
-        This is only a helper.
 
-        MoodAgent/Groq remains the primary interpreter.
+        This is a lexical helper only.
+
+        It does NOT determine wanted vs avoided.
         """
 
         found = []
@@ -1048,7 +1119,10 @@ class MoodKeywords:
                 ):
 
                     if mood not in found:
-                        found.append(mood)
+
+                        found.append(
+                            mood
+                        )
 
                     break
 
@@ -1060,15 +1134,7 @@ class MoodKeywords:
 
     def find_keywords(self, text):
         """
-        Return the actual vocabulary matches.
-
-        Example:
-
-        {
-            "mountains": ["mountain"],
-            "hiking": ["hiking"],
-            "quiet": ["peaceful"]
-        }
+        Return the exact vocabulary matches found.
         """
 
         found = {}
@@ -1084,31 +1150,44 @@ class MoodKeywords:
                     keyword
                 ):
 
-                    matches.append(keyword)
+                    matches.append(
+                        keyword
+                    )
 
             if matches:
+
                 found[mood] = matches
 
         return found
 
     # ==========================================================
-    # NEGATION DETECTION
+    # BASIC NEGATION CHECK
     # ==========================================================
 
-    def is_negated(self, text, keyword):
+    def is_negated(
+        self,
+        text,
+        keyword
+    ):
         """
-        Detect whether a keyword appears to be rejected.
+        Basic negation detection.
 
-        This is a basic helper only.
+        This is NOT intended to replace Groq.
 
-        The AI remains responsible for understanding
-        complicated language and context.
+        Groq remains responsible for contextual interpretation.
         """
 
-        text = self.normalize(text)
-        keyword = self.normalize(keyword)
+        text = self.normalize(
+            text
+        )
 
-        position = text.find(keyword)
+        keyword = self.normalize(
+            keyword
+        )
+
+        position = text.find(
+            keyword
+        )
 
         if position == -1:
             return False
@@ -1118,38 +1197,41 @@ class MoodKeywords:
         for phrase in self.negation_phrases:
 
             if phrase in before:
+
                 return True
 
         recent_words = before.split()[-5:]
 
         if any(
-            word in {"not", "no", "never"}
+            word in {
+                "not",
+                "no",
+                "never"
+            }
             for word in recent_words
         ):
+
             return True
 
         return False
 
     # ==========================================================
-    # ANALYZE EXPLICIT KEYWORDS
+    # KEYWORD ANALYSIS
     # ==========================================================
 
     def analyze(self, text):
         """
-        Analyze explicit vocabulary found in user input.
+        Perform deterministic keyword analysis.
 
-        Returns:
+        This remains a helper/testing function.
 
-        {
-            "wanted": [...],
-            "avoid": [...],
-            "keywords": {...}
-        }
-
-        This does NOT replace Groq.
+        MoodAgent should use Groq as the primary source
+        of contextual meaning.
         """
 
-        found = self.find_keywords(text)
+        found = self.find_keywords(
+            text
+        )
 
         wanted = []
         avoid = []
@@ -1164,12 +1246,25 @@ class MoodKeywords:
                 ):
 
                     if mood not in avoid:
-                        avoid.append(mood)
+
+                        avoid.append(
+                            mood
+                        )
 
                 else:
 
                     if mood not in wanted:
-                        wanted.append(mood)
+
+                        wanted.append(
+                            mood
+                        )
+
+        # Prevent conflicts.
+        wanted = [
+            mood
+            for mood in wanted
+            if mood not in avoid
+        ]
 
         return {
             "wanted": wanted,
@@ -1181,18 +1276,21 @@ class MoodKeywords:
     # VALIDATE GROQ PROFILE
     # ==========================================================
 
-    def validate_profile(self, profile):
+    def validate_profile(
+        self,
+        profile
+    ):
         """
-        Validate the mood portions of a profile returned
-        by Groq.
+        Validate the mood portion of a Groq result.
 
-        The AI still determines the meaning.
-
-        This helper only makes sure the returned mood names
-        exist in the application's vocabulary.
+        Constraints are deliberately preserved separately.
         """
 
-        if not isinstance(profile, dict):
+        if not isinstance(
+            profile,
+            dict
+        ):
+
             return {
                 "wanted": [],
                 "avoid": [],
@@ -1213,8 +1311,7 @@ class MoodKeywords:
             )
         )
 
-        # If a mood is both wanted and rejected,
-        # rejection takes priority.
+        # Avoid takes priority.
         wanted = [
             mood
             for mood in wanted

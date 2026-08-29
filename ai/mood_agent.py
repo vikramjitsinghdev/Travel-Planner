@@ -10,35 +10,55 @@ from mood.mood_score import MoodScore
 
 class MoodAgent:
     """
-    AI-powered travel preference interpreter.
+    Travel preference interpretation agent.
 
-    Responsibilities:
+    This agent receives BOTH:
 
-        1. Groq understands the user's natural language.
-        2. Groq determines whether preferences are wanted
-           or avoided.
-        3. MoodKeywords normalizes those preferences into
-           the application's canonical vocabulary.
-        4. MoodScore assigns deterministic numerical scores.
+        1. Basic trip information
+        2. Natural-language travel preferences
 
-    IMPORTANT:
+    It converts them into one structured user profile.
 
-        Groq is the authority for CONTEXT.
+    Architecture:
 
-        MoodKeywords is only a vocabulary/normalization helper.
+        main.py
+            |
+            +---- basic trip information
+            |
+            +---- user wishes
+            |
+            v
+        MoodAgent
+            |
+           Groq
+            |
+            v
+        Structured User Profile
+            |
+            +---- moods
+            +---- scores
+            +---- constraints
+            +---- raw information
+            +---- summary
 
-        MoodScore is only responsible for numerical scoring.
-
-    This class does NOT recommend destinations.
+    MoodAgent does NOT:
+        - recommend destinations
+        - search the web
+        - search maps
+        - search hotels
+        - calculate actual trip costs
     """
 
     def __init__(self):
 
         load_dotenv()
 
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = os.getenv(
+            "GROQ_API_KEY"
+        )
 
         if not api_key:
+
             raise ValueError(
                 "GROQ_API_KEY is not set in the .env file."
             )
@@ -49,34 +69,50 @@ class MoodAgent:
 
         self.model = "openai/gpt-oss-20b"
 
-        self.mood_keywords = MoodKeywords()
+        # ------------------------------------------------------
+        # Helper classes.
+        # ------------------------------------------------------
 
-        self.mood_score = MoodScore()
+        self.keyword_helper = MoodKeywords()
+
+        self.score_helper = MoodScore()
 
     # ==========================================================
-    # MAIN INTERPRETATION
+    # INTERPRET USER REQUEST
     # ==========================================================
 
-    def interpret(self, user_input):
+    def interpret(
+        self,
+        user_input,
+        trip_information=None
+    ):
         """
-        Interpret the user's travel request.
+        Interpret the user's travel request together with
+        the basic trip information.
 
-        Flow:
+        Parameters:
 
-            User input
-                ↓
-            Groq
-                ↓
-            Raw preferences
-                ↓
-            Canonical moods
-                ↓
-            Mood scores
-                ↓
-            Return to main.py
+            user_input:
+                Natural-language description of what the
+                user wants from the trip.
+
+            trip_information:
+                Basic trip constraints collected by main.py.
+
+        Returns:
+
+            Structured user profile.
         """
 
-        if not isinstance(user_input, str):
+        # ------------------------------------------------------
+        # Validate user input.
+        # ------------------------------------------------------
+
+        if not isinstance(
+            user_input,
+            str
+        ):
+
             raise TypeError(
                 "user_input must be a string."
             )
@@ -84,13 +120,274 @@ class MoodAgent:
         user_input = user_input.strip()
 
         if not user_input:
+
             raise ValueError(
                 "user_input cannot be empty."
             )
 
         # ------------------------------------------------------
-        # 1. Ask Groq to understand the user's language.
+        # Default trip information.
         # ------------------------------------------------------
+
+        if trip_information is None:
+
+            trip_information = {}
+
+        if not isinstance(
+            trip_information,
+            dict
+        ):
+
+            raise TypeError(
+                "trip_information must be a dictionary."
+            )
+
+        # ------------------------------------------------------
+        # Convert basic information to JSON.
+        # ------------------------------------------------------
+
+        trip_information_json = json.dumps(
+            trip_information,
+            indent=4
+        )
+
+        # ======================================================
+        # GROQ PROMPT
+        # ======================================================
+
+        prompt = f"""
+You are the travel preference interpretation component
+of an AI travel planning system.
+
+Your job is to understand EVERYTHING the user has provided.
+
+You have two sources of information:
+
+1. BASIC TRIP INFORMATION
+2. NATURAL-LANGUAGE TRAVEL WISHES
+
+You must combine them into one structured representation
+of what the user wants.
+
+You are NOT responsible for recommending destinations.
+
+You are NOT responsible for searching for destinations.
+
+You are NOT responsible for prices.
+
+You are NOT responsible for hotels or flights.
+
+------------------------------------------------------------
+BASIC TRIP INFORMATION
+------------------------------------------------------------
+
+{trip_information_json}
+
+------------------------------------------------------------
+USER'S NATURAL-LANGUAGE TRAVEL WISHES
+------------------------------------------------------------
+
+{user_input}
+
+------------------------------------------------------------
+YOUR TASK
+------------------------------------------------------------
+
+Extract:
+
+1. wanted
+
+Canonical moods/preferences the user wants.
+
+Examples:
+
+nature
+mountains
+beaches
+wildlife
+hiking
+relaxation
+quiet
+culture
+history
+food
+nightlife
+urban
+photography
+adventure
+warm_weather
+cold_weather
+snow
+remote
+family
+solo
+romance
+shopping
+luxury
+
+2. avoid
+
+Canonical moods/preferences the user explicitly wants
+to avoid.
+
+IMPORTANT:
+
+If the user says:
+
+"I don't want crowded cities"
+
+then:
+
+avoid:
+[
+    "urban",
+    "crowded"
+]
+
+Do NOT put "urban" or "crowded" in wanted.
+
+If the user says:
+
+"I don't want too much walking"
+
+do NOT interpret this as wanting "walking".
+
+Instead record it as a constraint or limitation.
+
+3. summary
+
+Give a short natural-language summary of the complete
+user request.
+
+4. raw_wanted
+
+Keep important phrases from the user's original request.
+
+5. raw_avoid
+
+Keep important phrases that describe things the user
+does not want.
+
+6. constraints
+
+Preserve the basic trip information.
+
+Do NOT invent missing information.
+
+------------------------------------------------------------
+IMPORTANT INTERPRETATION RULES
+------------------------------------------------------------
+
+The user's original words are the source of truth.
+
+Do not invent preferences.
+
+Do not convert every noun into a mood.
+
+For example:
+
+"I don't want a tiring trip"
+
+does NOT mean:
+
+wanted = ["rest"]
+
+Instead, understand it as a travel constraint.
+
+For example:
+
+"I don't want to walk much"
+
+does NOT mean:
+
+wanted = ["walking"]
+
+It means the user wants a trip requiring limited walking.
+
+Similarly:
+
+"I want nature but also an urban experience"
+
+means BOTH:
+
+wanted = ["nature", "urban"]
+
+Do not assume these preferences contradict each other.
+
+------------------------------------------------------------
+CONSTRAINT RULES
+------------------------------------------------------------
+
+The following information should be preserved exactly
+when available:
+
+trip_scope
+country
+region
+travelers
+duration_days
+departure_location
+maximum_total_travel_time
+maximum_distance
+safety_requirement
+transportation_preference
+accommodation_preference
+travel_dates
+other
+
+Do not guess values.
+
+If something is not provided, use null.
+
+"other" must always be an array.
+
+------------------------------------------------------------
+OUTPUT
+------------------------------------------------------------
+
+Return ONLY one JSON OBJECT.
+
+Never return a JSON array.
+
+Never return Markdown.
+
+Never return ```json.
+
+Never add explanations outside the JSON object.
+
+The response MUST follow this exact structure:
+
+{{
+    "wanted": [],
+    "avoid": [],
+    "constraints": {{
+        "trip_scope": null,
+        "country": null,
+        "region": null,
+        "travelers": null,
+        "duration_days": null,
+        "departure_location": null,
+        "maximum_total_travel_time": null,
+        "maximum_distance": null,
+        "safety_requirement": null,
+        "transportation_preference": null,
+        "accommodation_preference": null,
+        "travel_dates": null,
+        "other": []
+    }},
+    "summary": "",
+    "raw_wanted": [],
+    "raw_avoid": []
+}}
+
+Remember:
+
+The entire response must be ONE JSON OBJECT.
+"""
+
+        # ======================================================
+        # GROQ REQUEST
+        # ======================================================
 
         response = self.client.chat.completions.create(
 
@@ -99,206 +396,179 @@ class MoodAgent:
             messages=[
                 {
                     "role": "system",
-
-                    "content": """
-You are a travel preference interpretation AI.
-
-Your ONLY job is to understand the user's travel
-preferences.
-
-You must identify:
-
-1. wanted:
-   Things the user wants, likes, prefers, or is
-   interested in.
-
-2. avoid:
-   Things the user does not want, dislikes, wants
-   to escape, wants to stay away from, or wants
-   to minimize.
-
-3. summary:
-   A concise description of the user's overall
-   travel preferences.
-
-IMPORTANT CONTEXT RULES:
-
-You MUST understand the meaning of the entire sentence,
-not just individual keywords.
-
-Examples:
-
-"I want to escape the city."
-→ avoid: ["urban"]
-
-"I want to get away from crowded cities."
-→ avoid: ["crowded", "urban"]
-
-"I don't want nightlife."
-→ avoid: ["nightlife"]
-
-"I love exploring cities."
-→ wanted: ["urban"]
-
-"I want a city with beautiful architecture."
-→ wanted: ["urban", "architecture"]
-
-"I want mountains instead of cities."
-→ wanted: ["mountains"]
-→ avoid: ["urban"]
-
-"I want peace and quiet."
-→ wanted: ["peaceful", "quiet"]
-
-"I want nature but I don't want crowded places."
-→ wanted: ["nature"]
-→ avoid: ["crowded"]
-
-DO NOT classify a concept as wanted simply because
-its keyword appears in the user's sentence.
-
-For example:
-
-"I want to escape the city."
-
-must NOT produce:
-
-wanted: ["urban"]
-
-The meaning is that the user wants to avoid urban
-environments.
-
-Another example:
-
-"I don't want crowded cities."
-
-must NOT produce:
-
-wanted: ["urban", "crowded"]
-
-They are both unwanted.
-
-IMPORTANT:
-
-- Understand negation.
-- Understand "avoid", "escape", "away from",
-  "instead of", "without", "don't want", "do not want",
-  "hate", "dislike", and similar expressions.
-- Do not recommend destinations.
-- Do not calculate numerical scores.
-- Do not invent preferences.
-- Do not assume a preference merely because it is
-  associated with another preference.
-- Keep the raw preferences concise.
-- Preserve the user's actual meaning.
-
-Return ONLY valid JSON using the required schema.
-"""
+                    "content": (
+                        "You are a travel preference "
+                        "extraction system. "
+                        "Return exactly one valid JSON object "
+                        "and nothing else."
+                    )
                 },
-
                 {
                     "role": "user",
-                    "content": user_input
+                    "content": prompt
                 }
             ],
 
             response_format={
-                "type": "json_schema",
-
-                "json_schema": {
-                    "name": "travel_preferences",
-
-                    "strict": True,
-
-                    "schema": {
-                        "type": "object",
-
-                        "properties": {
-
-                            "wanted": {
-                                "type": "array",
-
-                                "items": {
-                                    "type": "string"
-                                }
-                            },
-
-                            "avoid": {
-                                "type": "array",
-
-                                "items": {
-                                    "type": "string"
-                                }
-                            },
-
-                            "summary": {
-                                "type": "string"
-                            }
-                        },
-
-                        "required": [
-                            "wanted",
-                            "avoid",
-                            "summary"
-                        ],
-
-                        "additionalProperties": False
-                    }
-                }
+                "type": "json_object"
             }
         )
 
-        # ------------------------------------------------------
-        # 2. Convert Groq's response into Python.
-        # ------------------------------------------------------
+        # ======================================================
+        # EXTRACT RESPONSE
+        # ======================================================
 
-        raw_result = json.loads(
-            response.choices[0].message.content
+        content = (
+            response
+            .choices[0]
+            .message
+            .content
         )
 
-        raw_wanted = raw_result.get(
+        if not content:
+
+            raise ValueError(
+                "Groq returned an empty response."
+            )
+
+        content = content.strip()
+
+        # ======================================================
+        # PARSE JSON
+        # ======================================================
+
+        try:
+
+            result = json.loads(
+                content
+            )
+
+        except json.JSONDecodeError as error:
+
+            raise ValueError(
+                "Groq returned invalid JSON."
+            ) from error
+
+        # ======================================================
+        # VALIDATE TOP LEVEL
+        # ======================================================
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
+            raise ValueError(
+                "MoodAgent expected a JSON object."
+            )
+
+        # ======================================================
+        # NORMALIZE FIELDS
+        # ======================================================
+
+        wanted = result.get(
             "wanted",
             []
         )
 
-        raw_avoid = raw_result.get(
+        avoid = result.get(
             "avoid",
             []
         )
 
-        # ------------------------------------------------------
-        # 3. Normalize Groq's interpretation.
-        #
-        # IMPORTANT:
-        #
-        # We use MoodKeywords to normalize the concepts
-        # Groq already classified.
-        #
-        # We do NOT independently classify the entire
-        # user input and then merge it blindly.
-        #
-        # This prevents:
-        #
-        # "escape the city"
-        #
-        # from becoming:
-        #
-        # wanted = ["urban"]
-        # ------------------------------------------------------
-
-        wanted = self._normalize_ai_moods(
-            raw_wanted
+        constraints = result.get(
+            "constraints",
+            {}
         )
 
-        avoid = self._normalize_ai_moods(
-            raw_avoid
+        summary = result.get(
+            "summary",
+            ""
+        )
+
+        raw_wanted = result.get(
+            "raw_wanted",
+            []
+        )
+
+        raw_avoid = result.get(
+            "raw_avoid",
+            []
+        )
+
+        if not isinstance(
+            wanted,
+            list
+        ):
+
+            wanted = []
+
+        if not isinstance(
+            avoid,
+            list
+        ):
+
+            avoid = []
+
+        if not isinstance(
+            constraints,
+            dict
+        ):
+
+            constraints = {}
+
+        if not isinstance(
+            raw_wanted,
+            list
+        ):
+
+            raw_wanted = []
+
+        if not isinstance(
+            raw_avoid,
+            list
+        ):
+
+            raw_avoid = []
+
+        # ======================================================
+        # NORMALIZE MOOD NAMES
+        # ======================================================
+
+        wanted = [
+            str(mood).strip().lower()
+            for mood in wanted
+            if str(mood).strip()
+        ]
+
+        avoid = [
+            str(mood).strip().lower()
+            for mood in avoid
+            if str(mood).strip()
+        ]
+
+        # ------------------------------------------------------
+        # Remove duplicates.
+        # ------------------------------------------------------
+
+        wanted = list(
+            dict.fromkeys(
+                wanted
+            )
+        )
+
+        avoid = list(
+            dict.fromkeys(
+                avoid
+            )
         )
 
         # ------------------------------------------------------
-        # 4. Remove conflicts.
+        # Prevent the same mood from being both wanted
+        # and avoided.
         #
-        # If Groq somehow places the same canonical mood
-        # in both wanted and avoid, avoid takes priority.
+        # If there is ambiguity, avoid takes priority because
+        # it represents an explicit rejection.
         # ------------------------------------------------------
 
         wanted = [
@@ -307,296 +577,112 @@ Return ONLY valid JSON using the required schema.
             if mood not in avoid
         ]
 
+        # ======================================================
+        # MERGE BASIC TRIP INFORMATION
+        # ======================================================
+
+        constraint_keys = [
+
+            "trip_scope",
+            "country",
+            "region",
+            "travelers",
+            "duration_days",
+            "departure_location",
+            "maximum_total_travel_time",
+            "maximum_distance",
+            "safety_requirement",
+            "transportation_preference",
+            "accommodation_preference",
+            "travel_dates",
+            "other"
+        ]
+
+        normalized_constraints = {}
+
+        for key in constraint_keys:
+
+            if key in constraints:
+
+                normalized_constraints[key] = (
+                    constraints[key]
+                )
+
+            elif key in trip_information:
+
+                normalized_constraints[key] = (
+                    trip_information[key]
+                )
+
+            else:
+
+                normalized_constraints[key] = (
+                    [] if key == "other"
+                    else None
+                )
+
         # ------------------------------------------------------
-        # 5. Calculate deterministic scores.
+        # main.py's collected information has priority.
+        #
+        # This prevents the LLM from accidentally changing
+        # hard user-provided constraints.
         # ------------------------------------------------------
 
-        canonical_profile = {
-            "wanted": wanted,
-            "avoid": avoid
-        }
+        for key in constraint_keys:
 
-        score_analysis = (
-            self.mood_score.analyze_profile(
-                canonical_profile
-            )
+            if key in trip_information:
+
+                normalized_constraints[key] = (
+                    trip_information[key]
+                )
+
+        # ======================================================
+        # MOOD SCORE CALCULATION
+        # ======================================================
+
+        score_profile = self.score_helper.analyze_profile(
+            {
+                "wanted": wanted,
+                "avoid": avoid
+            }
         )
 
-        # ------------------------------------------------------
-        # 6. Return everything to main.py.
-        # ------------------------------------------------------
+        scores = score_profile.get(
+            "combined",
+            {}
+        )
 
-        return {
+        # ======================================================
+        # FINAL USER PROFILE
+        # ======================================================
+
+        final_profile = {
+
             "wanted": wanted,
 
             "avoid": avoid,
 
-            "scores": score_analysis["combined"],
+            "scores": scores,
 
-            "score_details": score_analysis,
+            "score_details": score_profile,
 
-            "summary": raw_result.get(
-                "summary",
-                ""
-            ),
+            "constraints": normalized_constraints,
 
-            "raw_wanted": raw_wanted,
+            "summary": str(
+                summary
+            ).strip(),
 
-            "raw_avoid": raw_avoid
-        }
-
-    # ==========================================================
-    # NORMALIZE AI PREFERENCES
-    # ==========================================================
-
-    def _normalize_ai_moods(self, ai_moods):
-        """
-        Convert Groq's natural-language preference phrases
-        into canonical application moods.
-
-        IMPORTANT:
-
-        This function does NOT decide whether something is
-        wanted or avoided.
-
-        Groq has already made that decision.
-
-        Example:
-
-            "peaceful"
-                ↓
-            quiet
-
-            "beautiful nature"
-                ↓
-            nature
-
-            "crowded cities"
-                ↓
-            crowded + urban
-        """
-
-        if not isinstance(ai_moods, list):
-            return []
-
-        normalized_moods = []
-
-        for phrase in ai_moods:
-
-            if not isinstance(
-                phrase,
-                str
-            ):
-                continue
-
-            phrase = (
-                self.mood_keywords.normalize(
-                    phrase
-                )
-            )
-
-            if not phrase:
-                continue
-
-            # --------------------------------------------------
-            # First check if Groq directly returned a canonical
-            # mood.
-            # --------------------------------------------------
-
-            if self.mood_keywords.is_valid_mood(
-                phrase
-            ):
-
-                if phrase not in normalized_moods:
-
-                    normalized_moods.append(
-                        phrase
-                    )
-
-                continue
-
-            # --------------------------------------------------
-            # Otherwise try to map the phrase to the
-            # application's vocabulary.
-            # --------------------------------------------------
-
-            matches = (
-                self._find_canonical_matches(
-                    phrase
-                )
-            )
-
-            for mood in matches:
-
-                if mood not in normalized_moods:
-
-                    normalized_moods.append(
-                        mood
-                    )
-
-        return normalized_moods
-
-    # ==========================================================
-    # FIND CANONICAL MATCHES
-    # ==========================================================
-
-    def _find_canonical_matches(self, phrase):
-        """
-        Find canonical moods represented by an AI-generated
-        phrase.
-
-        This is deliberately conservative.
-
-        We do NOT search the original user input here.
-
-        We search only the specific phrase that Groq has
-        already classified as wanted or avoided.
-        """
-
-        matches = []
-
-        # ------------------------------------------------------
-        # First use the MoodKeywords vocabulary.
-        # ------------------------------------------------------
-
-        keyword_matches = (
-            self.mood_keywords.find_moods(
-                phrase
-            )
-        )
-
-        for mood in keyword_matches:
-
-            if mood not in matches:
-
-                matches.append(
-                    mood
-                )
-
-        # ------------------------------------------------------
-        # Handle common semantic mappings.
-        #
-        # These are mappings between language and your
-        # canonical vocabulary, not contextual decisions.
-        # ------------------------------------------------------
-
-        semantic_mappings = {
-
-            "peaceful": [
-                "quiet"
+            "raw_wanted": [
+                str(value).strip()
+                for value in raw_wanted
+                if str(value).strip()
             ],
 
-            "peace": [
-                "quiet"
-            ],
-
-            "tranquil": [
-                "quiet"
-            ],
-
-            "tranquility": [
-                "quiet"
-            ],
-
-            "serene": [
-                "quiet"
-            ],
-
-            "serenity": [
-                "quiet"
-            ],
-
-            "relaxing": [
-                "relaxation"
-            ],
-
-            "relaxed": [
-                "relaxation"
-            ],
-
-            "relax": [
-                "relaxation"
-            ],
-
-            "natural": [
-                "nature"
-            ],
-
-            "beautiful nature": [
-                "nature"
-            ],
-
-            "scenic nature": [
-                "nature"
-            ],
-
-            "mountainous": [
-                "mountains"
-            ],
-
-            "mountain": [
-                "mountains"
-            ],
-
-            "hiking trails": [
-                "hiking"
-            ],
-
-            "trekking": [
-                "hiking"
-            ],
-
-            "city": [
-                "urban"
-            ],
-
-            "cities": [
-                "urban"
-            ],
-
-            "urban areas": [
-                "urban"
-            ],
-
-            "urban environments": [
-                "urban"
-            ],
-
-            "busy cities": [
-                "urban",
-                "crowded"
-            ],
-
-            "crowded cities": [
-                "urban",
-                "crowded"
-            ],
-
-            "crowded areas": [
-                "crowded"
-            ],
-
-            "crowded places": [
-                "crowded"
-            ],
-
-            "crowded tourist areas": [
-                "crowded"
-            ],
-
-            "night life": [
-                "nightlife"
+            "raw_avoid": [
+                str(value).strip()
+                for value in raw_avoid
+                if str(value).strip()
             ]
         }
 
-        if phrase in semantic_mappings:
-
-            for mood in semantic_mappings[phrase]:
-
-                if mood not in matches:
-
-                    matches.append(
-                        mood
-                    )
-
-        return matches
+        return final_profile
