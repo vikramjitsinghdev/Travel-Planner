@@ -1,294 +1,696 @@
-"""
-Wanderlust SQLite database.
-
-Stores:
-- preloaded destination inspiration
-- trip sessions
-- full trip payloads (including budget state)
-
-Pexels image population is optional. If PEXELS_API_KEY is present,
-missing destination images are fetched once and stored locally in SQLite.
-"""
-
-import json
+import sqlite3
 import os
 import random
-import sqlite3
-from datetime import datetime, timezone
-from urllib.parse import quote
-from urllib.request import Request, urlopen
+from datetime import datetime
 
-from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
-DATABASE = "travel.db"
+DATABASE_PATH = os.path.join(
+    BASE_DIR,
+    "wanderlust.db"
+)
 
-DESTINATIONS = [
-    ("Kyoto", "Japan", "Kansai", "Temples, bamboo forests, gardens and traditional Japanese culture.", "culture,nature"),
-    ("Banff", "Canada", "Alberta", "Rocky Mountain scenery, turquoise lakes and wilderness.", "mountains,nature"),
-    ("Vancouver Island", "Canada", "British Columbia", "Coastal forests, quiet beaches and mountain landscapes.", "nature,coast"),
-    ("Cape Breton Highlands", "Canada", "Nova Scotia", "Atlantic coastline, highlands and scenic drives.", "nature,coast,mountains"),
-    ("Swiss Alps", "Switzerland", "Alps", "Alpine lakes, dramatic peaks and peaceful mountain villages.", "mountains,nature"),
-    ("Santorini", "Greece", "Cyclades", "Aegean views, sunsets, whitewashed villages and coastlines.", "coast,relaxation"),
-    ("Amalfi Coast", "Italy", "Campania", "Cliffside coastal scenery, villages and Mediterranean views.", "coast,relaxation"),
-    ("Iceland", "Iceland", "South Iceland", "Waterfalls, volcanic landscapes, glaciers and open wilderness.", "nature,adventure"),
-    ("Queenstown", "New Zealand", "Otago", "Lakes, mountains and spectacular South Island scenery.", "mountains,nature"),
-    ("Maldives", "Maldives", "Indian Ocean", "Tropical lagoons, beaches and quiet island resorts.", "beach,relaxation"),
-    ("Bali", "Indonesia", "Bali", "Rice terraces, forests, beaches and cultural landscapes.", "nature,beach"),
-    ("Patagonia", "Argentina/Chile", "Patagonia", "Remote mountains, glaciers, lakes and expansive wilderness.", "mountains,nature"),
-    ("Dolomites", "Italy", "South Tyrol", "Dramatic limestone peaks, alpine valleys and scenic villages.", "mountains,nature"),
-    ("Norwegian Fjords", "Norway", "Western Norway", "Fjords, waterfalls, mountains and peaceful coastal scenery.", "nature,coast,mountains"),
-    ("Madeira", "Portugal", "Madeira", "Volcanic mountains, forests, cliffs and Atlantic scenery.", "nature,coast"),
-    ("Azores", "Portugal", "Azores", "Volcanic lakes, green countryside and quiet Atlantic islands.", "nature,coast"),
-    ("Costa Rica", "Costa Rica", "Central America", "Rainforests, beaches, volcanoes and wildlife.", "nature,beach"),
-    ("Scottish Highlands", "United Kingdom", "Scotland", "Lochs, mountains, glens and remote countryside.", "nature,mountains"),
-    ("Grand Manan", "Canada", "New Brunswick", "Quiet island scenery, coastal cliffs and marine wildlife.", "nature,coast"),
-    ("Gaspé Peninsula", "Canada", "Quebec", "Rugged coast, forests, mountains and national parks.", "nature,coast,mountains"),
-]
 
+# ==========================================================
+# CONNECTION
+# ==========================================================
 
 def get_connection():
-    connection = sqlite3.connect(DATABASE)
+
+    connection = sqlite3.connect(
+        DATABASE_PATH
+    )
+
     connection.row_factory = sqlite3.Row
+
     return connection
 
 
-def init_db():
+# ==========================================================
+# DATABASE INITIALIZATION
+# ==========================================================
+
+def initialize_database():
+
     connection = get_connection()
 
-    connection.executescript("""
-        CREATE TABLE IF NOT EXISTS destinations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            country TEXT NOT NULL,
-            region TEXT,
-            description TEXT,
-            category TEXT,
-            image_url TEXT,
-            image_credit TEXT,
-            pexels_url TEXT
-        );
+    cursor = connection.cursor()
 
+    # ------------------------------------------------------
+    # USER / TRIP INFORMATION
+    # ------------------------------------------------------
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS trips (
-            trip_id TEXT PRIMARY KEY,
-            departure_location TEXT,
-            trip_scope TEXT,
-            country TEXT,
-            region TEXT,
-            travelers INTEGER,
-            duration_days INTEGER,
-            travel_dates TEXT,
-            maximum_total_travel_time TEXT,
-            maximum_distance TEXT,
-            transportation_preference TEXT,
-            accommodation_preference TEXT,
-            safety_requirement TEXT,
-            other_requirements TEXT,
-            user_preferences TEXT,
-            total_budget REAL,
-            spent REAL DEFAULT 0,
-            remaining REAL DEFAULT 0,
-            status TEXT,
-            selected_destination TEXT,
-            payload TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
 
-        CREATE INDEX IF NOT EXISTS idx_trips_status
-        ON trips(status);
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            departure_location TEXT,
+
+            trip_scope TEXT,
+
+            country TEXT,
+
+            travelers INTEGER,
+
+            duration_days INTEGER,
+
+            travel_dates TEXT,
+
+            maximum_total_travel_time TEXT,
+
+            maximum_distance TEXT,
+
+            transportation_preference TEXT,
+
+            accommodation_preference TEXT,
+
+            safety_requirement TEXT,
+
+            budget REAL,
+
+            other_requirements TEXT,
+
+            user_preferences TEXT,
+
+            status TEXT DEFAULT 'basic',
+
+            created_at TEXT,
+
+            updated_at TEXT
+        )
     """)
 
-    count = connection.execute(
-        "SELECT COUNT(*) AS count FROM destinations"
-    ).fetchone()["count"]
 
-    if count == 0:
-        connection.executemany("""
-            INSERT INTO destinations
-            (name, country, region, description, category)
-            VALUES (?, ?, ?, ?, ?)
-        """, DESTINATIONS)
+    # ------------------------------------------------------
+    # DESTINATIONS
+    # ------------------------------------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS destinations (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            name TEXT NOT NULL,
+
+            country TEXT,
+
+            region TEXT,
+
+            description TEXT,
+
+            image_url TEXT,
+
+            pexels_url TEXT,
+
+            photo_credit TEXT,
+
+            latitude REAL,
+
+            longitude REAL,
+
+            source TEXT DEFAULT 'preloaded',
+
+            created_at TEXT
+        )
+    """)
+
+
+    # ------------------------------------------------------
+    # EXPENSES
+    # ------------------------------------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS expenses (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            trip_id INTEGER NOT NULL,
+
+            category TEXT,
+
+            description TEXT,
+
+            amount REAL DEFAULT 0,
+
+            status TEXT DEFAULT 'estimated',
+
+            created_at TEXT,
+
+            FOREIGN KEY (trip_id)
+                REFERENCES trips(id)
+        )
+    """)
+
 
     connection.commit()
+
     connection.close()
 
-    populate_pexels_images()
+    seed_destinations()
 
 
-def populate_pexels_images():
-    api_key = os.getenv("PEXELS_API_KEY")
+# ==========================================================
+# PRELOADED DESTINATIONS
+# ==========================================================
 
-    if not api_key:
-        return
+PRELOADED_DESTINATIONS = [
+
+    {
+        "name": "Banff",
+        "country": "Canada",
+        "region": "Alberta",
+        "description":
+            "Mountain scenery, lakes, hiking and peaceful natural landscapes.",
+        "latitude": 51.1784,
+        "longitude": -115.5708
+    },
+
+    {
+        "name": "Vancouver",
+        "country": "Canada",
+        "region": "British Columbia",
+        "description":
+            "Coastal city surrounded by mountains, forests and ocean.",
+        "latitude": 49.2827,
+        "longitude": -123.1207
+    },
+
+    {
+        "name": "Quebec City",
+        "country": "Canada",
+        "region": "Quebec",
+        "description":
+            "Historic architecture, culture and European-style streets.",
+        "latitude": 46.8139,
+        "longitude": -71.2080
+    },
+
+    {
+        "name": "Jasper",
+        "country": "Canada",
+        "region": "Alberta",
+        "description":
+            "Quiet mountain environment with lakes, wildlife and hiking.",
+        "latitude": 52.8737,
+        "longitude": -118.0814
+    },
+
+    {
+        "name": "Tofino",
+        "country": "Canada",
+        "region": "British Columbia",
+        "description":
+            "Pacific coastline, beaches, forests and relaxed atmosphere.",
+        "latitude": 49.1530,
+        "longitude": -125.9066
+    },
+
+    {
+        "name": "Whistler",
+        "country": "Canada",
+        "region": "British Columbia",
+        "description":
+            "Mountain resort destination with outdoor activities.",
+        "latitude": 50.1163,
+        "longitude": -122.9574
+    },
+
+    {
+        "name": "Montreal",
+        "country": "Canada",
+        "region": "Quebec",
+        "description":
+            "Food, nightlife, culture, festivals and historic neighbourhoods.",
+        "latitude": 45.5017,
+        "longitude": -73.5673
+    },
+
+    {
+        "name": "Halifax",
+        "country": "Canada",
+        "region": "Nova Scotia",
+        "description":
+            "Atlantic coastline, waterfront areas and maritime culture.",
+        "latitude": 44.6488,
+        "longitude": -63.5752
+    },
+
+    {
+        "name": "Tokyo",
+        "country": "Japan",
+        "region": "Kanto",
+        "description":
+            "Massive modern city combining technology, culture and tradition.",
+        "latitude": 35.6762,
+        "longitude": 139.6503
+    },
+
+    {
+        "name": "Kyoto",
+        "country": "Japan",
+        "region": "Kansai",
+        "description":
+            "Temples, gardens, traditional streets and Japanese culture.",
+        "latitude": 35.0116,
+        "longitude": 135.7681
+    },
+
+    {
+        "name": "Osaka",
+        "country": "Japan",
+        "region": "Kansai",
+        "description":
+            "Food, nightlife, entertainment and urban Japanese culture.",
+        "latitude": 34.6937,
+        "longitude": 135.5023
+    },
+
+    {
+        "name": "Hokkaido",
+        "country": "Japan",
+        "region": "Northern Japan",
+        "description":
+            "Mountains, forests, lakes and wide open natural landscapes.",
+        "latitude": 43.2203,
+        "longitude": 142.8635
+    },
+
+    {
+        "name": "Shizuoka",
+        "country": "Japan",
+        "region": "Chubu",
+        "description":
+            "Mount Fuji views, coastal landscapes, tea fields and nature.",
+        "latitude": 34.9756,
+        "longitude": 138.3828
+    },
+
+    {
+        "name": "Lucerne",
+        "country": "Switzerland",
+        "region": "Central Switzerland",
+        "description":
+            "Lake scenery, mountains and picturesque historic surroundings.",
+        "latitude": 47.0502,
+        "longitude": 8.3093
+    },
+
+    {
+        "name": "Interlaken",
+        "country": "Switzerland",
+        "region": "Bernese Oberland",
+        "description":
+            "Alpine scenery, lakes and outdoor adventure.",
+        "latitude": 46.6863,
+        "longitude": 7.8632
+    },
+
+    {
+        "name": "Zermatt",
+        "country": "Switzerland",
+        "region": "Valais",
+        "description":
+            "Alpine village with dramatic mountain and Matterhorn scenery.",
+        "latitude": 46.0207,
+        "longitude": 7.7491
+    },
+
+    {
+        "name": "Reykjavik",
+        "country": "Iceland",
+        "region": "Capital Region",
+        "description":
+            "Gateway to Icelandic landscapes, geothermal areas and northern lights.",
+        "latitude": 64.1466,
+        "longitude": -21.9426
+    },
+
+    {
+        "name": "Queenstown",
+        "country": "New Zealand",
+        "region": "Otago",
+        "description":
+            "Mountains, lakes and adventure activities.",
+        "latitude": -45.0312,
+        "longitude": 168.6626
+    },
+
+    {
+        "name": "Vancouver Island",
+        "country": "Canada",
+        "region": "British Columbia",
+        "description":
+            "Forests, beaches, mountains and coastal wilderness.",
+        "latitude": 49.6500,
+        "longitude": -125.4490
+    },
+
+    {
+        "name": "Cape Breton",
+        "country": "Canada",
+        "region": "Nova Scotia",
+        "description":
+            "Coastal drives, mountains, forests and Atlantic scenery.",
+        "latitude": 46.1368,
+        "longitude": -60.1942
+    }
+
+]
+
+
+def seed_destinations():
 
     connection = get_connection()
-    rows = connection.execute("""
-        SELECT id, name, country
-        FROM destinations
-        WHERE image_url IS NULL OR image_url = ''
-    """).fetchall()
 
-    for row in rows:
-        try:
-            query = quote(f"{row['name']} {row['country']} travel")
-            request = Request(
-                f"https://api.pexels.com/v1/search?query={query}&per_page=1",
-                headers={"Authorization": api_key}
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM destinations"
+    )
+
+    count = cursor.fetchone()[0]
+
+    if count >= 20:
+
+        connection.close()
+
+        return
+
+
+    for destination in PRELOADED_DESTINATIONS:
+
+        cursor.execute("""
+            INSERT INTO destinations (
+                name,
+                country,
+                region,
+                description,
+                latitude,
+                longitude,
+                source,
+                created_at
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
 
-            with urlopen(request, timeout=10) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            destination["name"],
+            destination["country"],
+            destination["region"],
+            destination["description"],
+            destination["latitude"],
+            destination["longitude"],
+            "preloaded",
+            datetime.utcnow().isoformat()
 
-            photos = data.get("photos") or []
-            if not photos:
-                continue
+        ))
 
-            photo = photos[0]
-            image = photo.get("src", {}).get("large2x") or photo.get("src", {}).get("large")
-            credit = photo.get("photographer")
-            pexels_url = photo.get("url")
-
-            if image:
-                connection.execute("""
-                    UPDATE destinations
-                    SET image_url = ?, image_credit = ?, pexels_url = ?
-                    WHERE id = ?
-                """, (image, credit, pexels_url, row["id"]))
-
-        except Exception:
-            # Image population is optional. The application must still start
-            # if Pexels is unavailable.
-            continue
 
     connection.commit()
+
     connection.close()
 
 
-def random_destinations(limit=4):
-    limit = max(1, min(int(limit), 20))
-    connection = get_connection()
-    rows = connection.execute(
-        "SELECT * FROM destinations ORDER BY RANDOM() LIMIT ?",
-        (limit,)
-    ).fetchall()
-    connection.close()
-    return [dict(row) for row in rows]
+# ==========================================================
+# TRIP CREATION
+# ==========================================================
 
-
-def random_destination():
-    rows = random_destinations(1)
-    return rows[0] if rows else None
-
-
-def save_trip(payload):
-    if not isinstance(payload, dict):
-        raise TypeError("Trip payload must be a dictionary.")
-
-    trip_id = payload.get("trip_id")
-    if not trip_id:
-        return
-
-    info = payload.get("trip_information") or {}
-    budget = payload.get("budget") or {}
-
-    now = datetime.now(timezone.utc).isoformat()
+def create_trip(data):
 
     connection = get_connection()
-    connection.execute("""
+
+    cursor = connection.cursor()
+
+    now = datetime.utcnow().isoformat()
+
+    cursor.execute("""
         INSERT INTO trips (
-            trip_id, departure_location, trip_scope, country, region,
-            travelers, duration_days, travel_dates,
-            maximum_total_travel_time, maximum_distance,
-            transportation_preference, accommodation_preference,
-            safety_requirement, other_requirements, user_preferences,
-            total_budget, spent, remaining, status,
-            selected_destination, payload, created_at, updated_at
+
+            departure_location,
+            trip_scope,
+            country,
+            travelers,
+            duration_days,
+            travel_dates,
+            maximum_total_travel_time,
+            maximum_distance,
+            transportation_preference,
+            accommodation_preference,
+            safety_requirement,
+            budget,
+            other_requirements,
+            status,
+            created_at,
+            updated_at
+
         )
-        VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )
-        ON CONFLICT(trip_id) DO UPDATE SET
-            departure_location=excluded.departure_location,
-            trip_scope=excluded.trip_scope,
-            country=excluded.country,
-            region=excluded.region,
-            travelers=excluded.travelers,
-            duration_days=excluded.duration_days,
-            travel_dates=excluded.travel_dates,
-            maximum_total_travel_time=excluded.maximum_total_travel_time,
-            maximum_distance=excluded.maximum_distance,
-            transportation_preference=excluded.transportation_preference,
-            accommodation_preference=excluded.accommodation_preference,
-            safety_requirement=excluded.safety_requirement,
-            other_requirements=excluded.other_requirements,
-            user_preferences=excluded.user_preferences,
-            total_budget=excluded.total_budget,
-            spent=excluded.spent,
-            remaining=excluded.remaining,
-            status=excluded.status,
-            selected_destination=excluded.selected_destination,
-            payload=excluded.payload,
-            updated_at=excluded.updated_at
+
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        trip_id,
-        info.get("departure_location"),
-        info.get("trip_scope"),
-        info.get("country"),
-        info.get("region"),
-        info.get("travelers"),
-        info.get("duration_days"),
-        info.get("travel_dates"),
-        info.get("maximum_total_travel_time"),
-        info.get("maximum_distance"),
-        info.get("transportation_preference"),
-        info.get("accommodation_preference"),
-        info.get("safety_requirement"),
-        json.dumps(info.get("other", []), ensure_ascii=False),
-        payload.get("original_user_input") or payload.get("user_preferences"),
-        budget.get("total_budget"),
-        budget.get("spent", 0),
-        budget.get("remaining", 0),
-        payload.get("status"),
-        payload.get("selected_destination"),
-        json.dumps(payload, ensure_ascii=False, default=str),
+
+        data.get("departure_location"),
+        data.get("trip_scope"),
+        data.get("country"),
+        data.get("travelers"),
+        data.get("duration_days"),
+        data.get("travel_dates"),
+        data.get("maximum_total_travel_time"),
+        data.get("maximum_distance"),
+        data.get("transportation_preference"),
+        data.get("accommodation_preference"),
+        data.get("safety_requirement"),
+        data.get("budget"),
+        data.get("other"),
+        "basic",
         now,
         now
+
     ))
+
+
+    trip_id = cursor.lastrowid
+
     connection.commit()
+
     connection.close()
 
+    return trip_id
+
+
+# ==========================================================
+# GET TRIP
+# ==========================================================
 
 def get_trip(trip_id):
+
     connection = get_connection()
-    row = connection.execute(
-        "SELECT payload FROM trips WHERE trip_id = ?",
-        (trip_id,)
-    ).fetchone()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM trips
+        WHERE id = ?
+    """, (trip_id,))
+
+    row = cursor.fetchone()
+
     connection.close()
 
-    if not row:
+    if row is None:
         return None
 
-    try:
-        return json.loads(row["payload"])
-    except json.JSONDecodeError:
-        return None
+    return dict(row)
 
 
-def delete_trip(trip_id):
+# ==========================================================
+# UPDATE TRIP
+# ==========================================================
+
+def update_trip(trip_id, data):
+
     connection = get_connection()
-    cursor = connection.execute(
-        "DELETE FROM trips WHERE trip_id = ?",
-        (trip_id,)
+
+    cursor = connection.cursor()
+
+    allowed = [
+
+        "departure_location",
+        "trip_scope",
+        "country",
+        "travelers",
+        "duration_days",
+        "travel_dates",
+        "maximum_total_travel_time",
+        "maximum_distance",
+        "transportation_preference",
+        "accommodation_preference",
+        "safety_requirement",
+        "budget",
+        "other_requirements",
+        "user_preferences",
+        "status"
+
+    ]
+
+
+    updates = []
+
+    values = []
+
+
+    for key in allowed:
+
+        if key in data:
+
+            updates.append(
+                f"{key} = ?"
+            )
+
+            values.append(
+                data[key]
+            )
+
+
+    if not updates:
+
+        connection.close()
+
+        return get_trip(trip_id)
+
+
+    updates.append(
+        "updated_at = ?"
     )
+
+    values.append(
+        datetime.utcnow().isoformat()
+    )
+
+    values.append(
+        trip_id
+    )
+
+
+    cursor.execute(
+        f"""
+        UPDATE trips
+        SET {", ".join(updates)}
+        WHERE id = ?
+        """,
+        values
+    )
+
+
     connection.commit()
-    deleted = cursor.rowcount > 0
+
     connection.close()
-    return deleted
+
+    return get_trip(trip_id)
 
 
-if __name__ == "__main__":
-    init_db()
-    print(f"SQLite database initialized: {DATABASE}")
+# ==========================================================
+# RANDOM DESTINATIONS
+# ==========================================================
+
+def get_random_destinations(limit=6):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM destinations
+        ORDER BY RANDOM()
+        LIMIT ?
+    """, (limit,))
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ==========================================================
+# HOME DESTINATIONS
+# ==========================================================
+
+def get_home_destinations(limit=5):
+
+    return get_random_destinations(limit)
+
+
+# ==========================================================
+# SEARCH DESTINATIONS
+# ==========================================================
+
+def search_destinations(query):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    pattern = f"%{query}%"
+
+    cursor.execute("""
+        SELECT *
+        FROM destinations
+
+        WHERE
+            name LIKE ?
+            OR country LIKE ?
+            OR region LIKE ?
+            OR description LIKE ?
+
+        ORDER BY name
+
+        LIMIT 20
+    """, (
+        pattern,
+        pattern,
+        pattern,
+        pattern
+    ))
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ==========================================================
+# DESTINATION BY ID
+# ==========================================================
+
+def get_destination(destination_id):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM destinations
+        WHERE id = ?
+    """, (destination_id,))
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return dict(row)

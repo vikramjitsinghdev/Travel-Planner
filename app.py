@@ -1,4 +1,10 @@
-from flask import Flask, jsonify, request, render_template
+from flask import (
+    Flask,
+    jsonify,
+    request,
+    render_template
+)
+
 import main
 import database
 
@@ -15,126 +21,317 @@ app = Flask(
 
 
 # ==========================================================
-# HELPERS
-# ==========================================================
-
-def json_body():
-    data = request.get_json(silent=True)
-
-    if not isinstance(data, dict):
-        raise ValueError("Request body must contain valid JSON.")
-
-    return data
-
-
-def backend_call(function, data):
-    """
-    Call main.py and persist the returned trip state in SQLite.
-    main.py remains the owner of the travel-planning workflow.
-    """
-    result = function(trip_data=data)
-
-    if isinstance(result, dict) and result.get("trip_id"):
-        database.save_trip(result)
-
-    return result
-
-
-# ==========================================================
-# STARTUP
-# ==========================================================
-
-database.init_db()
-
-
-# ==========================================================
-# HOME
+# HOME PAGE
 # ==========================================================
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    """
+    Serve the Wanderlust frontend.
+
+    Browser
+        ↓
+    /
+        ↓
+    templates/index.html
+
+    JavaScript inside index.html then communicates
+    with the Flask API endpoints.
+    """
+
+    return render_template(
+        "index.html"
+    )
+
+
+# ==========================================================
+# HOME DESTINATIONS API
+# ==========================================================
+
+@app.route(
+    "/api/destinations/home",
+    methods=["GET"]
+)
+def home_destinations():
+    """
+    Return preloaded destinations for the homepage.
+
+    This does NOT render HTML.
+
+    It provides destination data to script.js.
+    """
+
+    try:
+
+        destinations = (
+            database.get_home_destinations(5)
+        )
+
+        return jsonify({
+            "status": "success",
+            "data": destinations
+        })
+
+    except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
 
 
 # ==========================================================
 # HEALTH
 # ==========================================================
 
-@app.route("/api/health", methods=["GET"])
+@app.route(
+    "/api/health",
+    methods=["GET"]
+)
 def health():
+
     return jsonify({
         "status": "success",
-        "message": "AI Travel Planner backend is running."
+        "message": (
+            "AI Travel Planner backend is running."
+        )
     })
 
-
 # ==========================================================
-# DESTINATION INSPIRATION
+# RANDOM DESTINATIONS
 # ==========================================================
 
-@app.route("/api/destinations/home", methods=["GET"])
-def home_destinations():
+@app.route(
+    "/api/destinations/random",
+    methods=["GET"]
+)
+def random_destinations():
+
     try:
-        limit = request.args.get("limit", 4, type=int)
+
+        destinations = (
+            database.get_random_destinations(6)
+        )
+
         return jsonify({
             "status": "success",
-            "data": database.random_destinations(limit)
+            "data": destinations
         })
+
     except Exception as error:
+
+        return jsonify({
+            "status": "error",
+            "message": str(error)
+        }), 500
+    
+# ==========================================================
+# SEARCH DESTINATION
+# ==========================================================
+
+# ==========================================================
+# SEARCH DESTINATIONS
+# ==========================================================
+
+@app.route(
+    "/api/destinations/search",
+    methods=["GET"]
+)
+def search_destinations():
+
+    query = request.args.get(
+        "q",
+        ""
+    ).strip()
+
+
+    if not query:
+
+        return jsonify({
+            "status": "success",
+            "data": []
+        })
+
+
+    try:
+
+        destinations = (
+            database.search_destinations(
+                query
+            )
+        )
+
+        return jsonify({
+            "status": "success",
+            "data": destinations
+        })
+
+    except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
         }), 500
 
+# ==========================================================
+# DESTINATION DETAILS
+# ==========================================================
 
-@app.route("/api/destinations/random", methods=["GET"])
-def random_destination():
+@app.route(
+    "/api/destinations/<int:destination_id>",
+    methods=["GET"]
+)
+def destination_details(
+    destination_id
+):
+
     try:
-        destination = database.random_destination()
+
+        destination = (
+            database.get_destination(
+                destination_id
+            )
+        )
+
 
         if destination is None:
+
             return jsonify({
                 "status": "error",
-                "message": "No preloaded destinations are available."
+                "message": "Destination not found."
             }), 404
+
 
         return jsonify({
             "status": "success",
             "data": destination
         })
+
+
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
         }), 500
 
+# ==========================================================
+# SAVE BASIC TRIP INFORMATION
+# ==========================================================
+
+@app.route(
+    "/api/trip/basic",
+    methods=["POST"]
+)
+def save_basic_trip():
+
+    try:
+
+        data = request.get_json(
+            silent=True
+        )
+
+
+        if not isinstance(
+            data,
+            dict
+        ):
+
+            return jsonify({
+                "status": "error",
+                "message":
+                    "Invalid JSON data."
+            }), 400
+
+
+        required_fields = [
+            "departure_location",
+            "travelers",
+            "duration_days",
+            "travel_dates",
+            "budget"
+        ]
+
+
+        for field in required_fields:
+
+            if not str(
+                data.get(field, "")
+            ).strip():
+
+                return jsonify({
+                    "status": "error",
+                    "message":
+                        f"Missing required field: {field}"
+                }), 400
+
+
+        trip_id = database.create_trip(
+            data
+        )
+
+
+        return jsonify({
+
+            "status":
+                "success",
+
+            "data": {
+
+                "trip_id":
+                    trip_id,
+
+                "trip":
+                    database.get_trip(
+                        trip_id
+                    )
+
+            }
+
+        })
+
+
+    except Exception as error:
+
+        return jsonify({
+
+            "status":
+                "error",
+
+            "message":
+                str(error)
+
+        }), 500
 
 # ==========================================================
 # START TRIP
 # ==========================================================
 
-@app.route("/api/trip/start", methods=["POST"])
+@app.route(
+    "/api/trip/start",
+    methods=["POST"]
+)
 def start_trip():
+
     try:
-        data = json_body()
 
-        # The frontend must send preference text separately
-        # as a normal string.
-        user_preferences = data.get("user_preferences")
+        data = request.get_json(
+            silent=True
+        )
 
-        if not isinstance(user_preferences, str):
+        if not isinstance(
+            data,
+            dict
+        ):
+
             return jsonify({
                 "status": "error",
-                "message": "user_preferences must be a string."
+                "message": "Invalid JSON."
             }), 400
 
-        if not user_preferences.strip():
-            return jsonify({
-                "status": "error",
-                "message": "user_preferences cannot be empty."
-            }), 400
-
-        result = backend_call(main.start_trip, data)
+        result = main.start_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -142,6 +339,7 @@ def start_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -149,14 +347,24 @@ def start_trip():
 
 
 # ==========================================================
-# UPDATE TRIP
+# UPDATE
 # ==========================================================
 
-@app.route("/api/trip/update", methods=["POST"])
+@app.route(
+    "/api/trip/update",
+    methods=["POST"]
+)
 def update_trip():
+
     try:
-        data = json_body()
-        result = backend_call(main.update_trip, data)
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        result = main.update_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -164,21 +372,63 @@ def update_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
         }), 500
 
+@app.route(
+    "/api/trip/basic/<int:trip_id>",
+    methods=["GET"]
+)
+def get_basic_trip(
+    trip_id
+):
+
+    trip = database.get_trip(
+        trip_id
+    )
+
+
+    if trip is None:
+
+        return jsonify({
+            "status": "error",
+            "message": "Trip not found."
+        }), 404
+
+
+    return jsonify({
+
+        "status":
+            "success",
+
+        "data":
+            trip
+
+    })
+
 
 # ==========================================================
-# SELECT TRIP
+# SELECT
 # ==========================================================
 
-@app.route("/api/trip/select", methods=["POST"])
+@app.route(
+    "/api/trip/select",
+    methods=["POST"]
+)
 def select_trip():
+
     try:
-        data = json_body()
-        result = backend_call(main.select_trip, data)
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        result = main.select_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -186,6 +436,7 @@ def select_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -193,14 +444,24 @@ def select_trip():
 
 
 # ==========================================================
-# CONFIRM TRIP
+# CONFIRM
 # ==========================================================
 
-@app.route("/api/trip/confirm", methods=["POST"])
+@app.route(
+    "/api/trip/confirm",
+    methods=["POST"]
+)
 def confirm_trip():
+
     try:
-        data = json_body()
-        result = backend_call(main.confirm_trip, data)
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        result = main.confirm_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -208,6 +469,7 @@ def confirm_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -215,14 +477,24 @@ def confirm_trip():
 
 
 # ==========================================================
-# CANCEL TRIP
+# CANCEL
 # ==========================================================
 
-@app.route("/api/trip/cancel", methods=["POST"])
+@app.route(
+    "/api/trip/cancel",
+    methods=["POST"]
+)
 def cancel_trip():
+
     try:
-        data = json_body()
-        result = backend_call(main.cancel_trip, data)
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        result = main.cancel_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -230,6 +502,7 @@ def cancel_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -237,14 +510,24 @@ def cancel_trip():
 
 
 # ==========================================================
-# TRIP STATUS
+# STATUS
 # ==========================================================
 
-@app.route("/api/trip/status", methods=["POST"])
+@app.route(
+    "/api/trip/status",
+    methods=["POST"]
+)
 def trip_status():
+
     try:
-        data = json_body()
-        result = backend_call(main.get_trip_status, data)
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        result = main.get_trip_status(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -252,6 +535,7 @@ def trip_status():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -259,23 +543,24 @@ def trip_status():
 
 
 # ==========================================================
-# DELETE TRIP
+# DELETE
 # ==========================================================
 
-@app.route("/api/trip/delete", methods=["POST"])
+@app.route(
+    "/api/trip/delete",
+    methods=["POST"]
+)
 def delete_trip():
+
     try:
-        data = json_body()
-        trip_id = data.get("trip_id")
 
-        if not trip_id:
-            raise ValueError("trip_id is required.")
+        data = request.get_json(
+            silent=True
+        ) or {}
 
-        # Delete from main.py first.
-        result = main.delete_trip(trip_data=data)
-
-        # Then remove the persisted database record.
-        database.delete_trip(trip_id)
+        result = main.delete_trip(
+            trip_data=data
+        )
 
         return jsonify({
             "status": "success",
@@ -283,6 +568,7 @@ def delete_trip():
         })
 
     except Exception as error:
+
         return jsonify({
             "status": "error",
             "message": str(error)
@@ -294,6 +580,7 @@ def delete_trip():
 # ==========================================================
 
 if __name__ == "__main__":
+
     app.run(
         host="127.0.0.1",
         port=5000,

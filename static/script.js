@@ -12,22 +12,27 @@
             |
             v
          app.py
-            |
-       +----+----------------+
-       |                     |
-   database.py            main.py
-       |                     |
-   destinations        AI Travel Pipeline
-       |
-     SQLite
+          /   \
+         /     \
+        v       v
+   database.py main.py
+        |       |
+     SQLite    AI
+        |
+   destinations
 
 
-   Flask API endpoints:
+   Flask API:
 
        GET  /api/health
 
        GET  /api/destinations/home
        GET  /api/destinations/random
+       GET  /api/destinations/search
+       GET  /api/destinations/<id>
+
+       POST /api/trip/basic
+       GET  /api/trip/basic/<id>
 
        POST /api/trip/start
        POST /api/trip/update
@@ -45,11 +50,24 @@
 
 let currentTrip = null;
 
-/*
- * Basic information is stored separately from
- * the actual trip-planning preference.
- */
 let basicTripData = null;
+
+let currentTripId = null;
+
+
+/* ============================================================
+   LOCAL STORAGE KEYS
+   ============================================================ */
+
+const STORAGE_KEYS = {
+
+    tripId:
+        "wanderlust_trip_id",
+
+    basicTrip:
+        "wanderlust_basic_trip"
+
+};
 
 
 /* ============================================================
@@ -58,27 +76,29 @@ let basicTripData = null;
 
 const API = {
 
+    /* --------------------------------------------------------
+       GENERIC REQUEST
+    -------------------------------------------------------- */
+
     async request(
         endpoint,
-        method = "POST",
+        method = "GET",
         data = null
     ) {
 
         const options = {
+
             method: method,
-            headers: {}
+
+            headers: {
+                "Content-Type":
+                    "application/json"
+            }
+
         };
 
 
-        /*
-         * Only send JSON when data exists.
-         */
-
         if (data !== null) {
-
-            options.headers[
-                "Content-Type"
-            ] = "application/json";
 
             options.body =
                 JSON.stringify(data);
@@ -99,13 +119,8 @@ const API = {
 
         } catch (error) {
 
-            console.error(
-                "FETCH ERROR:",
-                error
-            );
-
             throw new Error(
-                "Unable to connect to the Flask server."
+                "Unable to connect to the Flask server. Make sure app.py is running."
             );
 
         }
@@ -119,7 +134,7 @@ const API = {
             payload =
                 await response.json();
 
-        } catch {
+        } catch (error) {
 
             throw new Error(
                 "The Flask server returned an invalid response."
@@ -160,6 +175,10 @@ const API = {
     },
 
 
+    /* ========================================================
+       DESTINATIONS
+       ======================================================== */
+
     /* --------------------------------------------------------
        HOME DESTINATIONS
     -------------------------------------------------------- */
@@ -175,10 +194,10 @@ const API = {
 
 
     /* --------------------------------------------------------
-       RANDOM DESTINATION
+       RANDOM DESTINATIONS
     -------------------------------------------------------- */
 
-    randomDestination() {
+    randomDestinations() {
 
         return this.request(
             "/api/destinations/random",
@@ -188,18 +207,148 @@ const API = {
     },
 
 
+    /*
+     * Compatibility helper.
+     *
+     * Some older frontend code calls:
+     *
+     * API.randomDestination()
+     *
+     * Keep this function so that old calls
+     * do not break.
+     */
+
+    async randomDestination() {
+
+        const destinations =
+            await this.randomDestinations();
+
+
+        if (
+            !Array.isArray(
+                destinations
+            ) ||
+            destinations.length === 0
+        ) {
+
+            return null;
+
+        }
+
+
+        return destinations[0];
+
+    },
+
+
+    /* --------------------------------------------------------
+       SEARCH DESTINATIONS
+    -------------------------------------------------------- */
+
+    searchDestinations(
+        query
+    ) {
+
+        return this.request(
+
+            "/api/destinations/search?q=" +
+            encodeURIComponent(
+                query
+            ),
+
+            "GET"
+
+        );
+
+    },
+
+
+    /*
+     * Compatibility alias.
+     *
+     * Older code used API.searchDestination().
+     */
+
+    searchDestination(
+        query
+    ) {
+
+        return this.searchDestinations(
+            query
+        );
+
+    },
+
+
+    /* --------------------------------------------------------
+       DESTINATION DETAILS
+    -------------------------------------------------------- */
+
+    destination(
+        id
+    ) {
+
+        return this.request(
+            `/api/destinations/${id}`,
+            "GET"
+        );
+
+    },
+
+
+    /* ========================================================
+       BASIC INFORMATION
+       ======================================================== */
+
+    /* --------------------------------------------------------
+       SAVE BASIC INFORMATION
+    -------------------------------------------------------- */
+
+    saveBasicTrip(
+        data
+    ) {
+
+        return this.request(
+            "/api/trip/basic",
+            "POST",
+            data
+        );
+
+    },
+
+
+    /* --------------------------------------------------------
+       LOAD BASIC INFORMATION
+    -------------------------------------------------------- */
+
+    getBasicTrip(
+        tripId
+    ) {
+
+        return this.request(
+            `/api/trip/basic/${tripId}`,
+            "GET"
+        );
+
+    },
+
+
+    /* ========================================================
+       AI TRIP PIPELINE
+       ======================================================== */
+
     /* --------------------------------------------------------
        START TRIP
     -------------------------------------------------------- */
 
     startTrip(
-        tripData
+        data
     ) {
 
         return this.request(
             "/api/trip/start",
             "POST",
-            tripData
+            data
         );
 
     },
@@ -218,8 +367,11 @@ const API = {
             "/api/trip/update",
             "POST",
             {
-                trip_id: tripId,
-                change_request: changeRequest
+                trip_id:
+                    tripId,
+
+                change_request:
+                    changeRequest
             }
         );
 
@@ -239,8 +391,11 @@ const API = {
             "/api/trip/select",
             "POST",
             {
-                trip_id: tripId,
-                selected_index: selectedIndex
+                trip_id:
+                    tripId,
+
+                selected_index:
+                    selectedIndex
             }
         );
 
@@ -259,7 +414,8 @@ const API = {
             "/api/trip/confirm",
             "POST",
             {
-                trip_id: tripId
+                trip_id:
+                    tripId
             }
         );
 
@@ -278,7 +434,8 @@ const API = {
             "/api/trip/cancel",
             "POST",
             {
-                trip_id: tripId
+                trip_id:
+                    tripId
             }
         );
 
@@ -286,7 +443,7 @@ const API = {
 
 
     /* --------------------------------------------------------
-       GET TRIP STATUS
+       TRIP STATUS
     -------------------------------------------------------- */
 
     getTripStatus(
@@ -297,7 +454,8 @@ const API = {
             "/api/trip/status",
             "POST",
             {
-                trip_id: tripId
+                trip_id:
+                    tripId
             }
         );
 
@@ -316,7 +474,8 @@ const API = {
             "/api/trip/delete",
             "POST",
             {
-                trip_id: tripId
+                trip_id:
+                    tripId
             }
         );
 
@@ -329,10 +488,14 @@ const API = {
    BASIC DOM HELPERS
    ============================================================ */
 
-function value(id) {
+function value(
+    id
+) {
 
     const element =
-        document.getElementById(id);
+        document.getElementById(
+            id
+        );
 
 
     if (!element) {
@@ -360,7 +523,9 @@ function setMessage(
 ) {
 
     const element =
-        document.getElementById(id);
+        document.getElementById(
+            id
+        );
 
 
     if (!element) {
@@ -434,8 +599,11 @@ function formatMoney(
     return amount.toLocaleString(
         "en-CA",
         {
-            style: "currency",
-            currency: "CAD"
+            style:
+                "currency",
+
+            currency:
+                "CAD"
         }
     );
 
@@ -467,7 +635,8 @@ function showPage(
 
     const target =
         document.getElementById(
-            "page-" + pageName
+            "page-" +
+            pageName
         );
 
 
@@ -488,8 +657,12 @@ function showPage(
             button => {
 
                 button.classList.toggle(
+
                     "active",
-                    button.dataset.page === pageName
+
+                    button.dataset.page ===
+                    pageName
+
                 );
 
             }
@@ -500,52 +673,6 @@ function showPage(
         top: 0,
         behavior: "smooth"
     });
-
-}
-
-
-/* ============================================================
-   NAVIGATION INITIALIZATION
-   ============================================================ */
-
-function initializeNavigation() {
-
-    document
-        .querySelectorAll(
-            ".nav-button"
-        )
-        .forEach(
-            button => {
-
-                button.addEventListener(
-                    "click",
-                    () => {
-
-                        /*
-                         * EDIT BASIC INFORMATION
-                         * should open the basic information
-                         * page rather than the planning page.
-                         */
-
-                        if (
-                            button.dataset.page ===
-                            "basic"
-                        ) {
-
-                            loadBasicInformationIntoForm();
-
-                        }
-
-
-                        showPage(
-                            button.dataset.page
-                        );
-
-                    }
-                );
-
-            }
-        );
 
 }
 
@@ -655,10 +782,6 @@ function detectDepartureCountry(
     }
 
 
-    /*
-     * Canadian province codes.
-     */
-
     const canadianProvinceCodes = [
 
         "ab",
@@ -696,7 +819,9 @@ function detectDepartureCountry(
         parts.some(
             item =>
                 canadianProvinceCodes
-                    .includes(item)
+                    .includes(
+                        item
+                    )
         )
     ) {
 
@@ -752,7 +877,6 @@ function updateCountryField() {
 
 
     if (
-        !countryField ||
         !countryInput
     ) {
 
@@ -769,13 +893,6 @@ function updateCountryField() {
         );
 
 
-    /*
-     * Domestic:
-     *
-     * Automatically use the departure
-     * country when it can be detected.
-     */
-
     if (
         scope === "domestic" &&
         detectedCountry
@@ -785,8 +902,12 @@ function updateCountryField() {
             detectedCountry;
 
 
-        countryField.style.display =
-            "none";
+        if (countryField) {
+
+            countryField.style.display =
+                "none";
+
+        }
 
 
         if (hint) {
@@ -798,8 +919,12 @@ function updateCountryField() {
 
     } else {
 
-        countryField.style.display =
-            "flex";
+        if (countryField) {
+
+            countryField.style.display =
+                "flex";
+
+        }
 
 
         if (hint) {
@@ -911,243 +1036,6 @@ function buildBasicTripData() {
 
 
 /* ============================================================
-   SAVE BASIC INFORMATION
-   ============================================================ */
-
-function saveBasicInformation() {
-
-    const data =
-        buildBasicTripData();
-
-
-    const validationError =
-        validateBasicTripData(
-            data
-        );
-
-
-    if (validationError) {
-
-        setMessage(
-            "basicError",
-            validationError
-        );
-
-        return false;
-
-    }
-
-
-    basicTripData =
-        data;
-
-
-    try {
-
-        localStorage.setItem(
-            "wanderlust_basic_trip",
-            JSON.stringify(
-                data
-            )
-        );
-
-    } catch (error) {
-
-        console.warn(
-            "Unable to save basic information:",
-            error
-        );
-
-    }
-
-
-    setMessage(
-        "basicError",
-        "",
-        false
-    );
-
-
-    setMessage(
-        "basicSuccess",
-        "Basic trip information saved.",
-        true
-    );
-
-
-    return true;
-
-}
-
-
-/* ============================================================
-   LOAD BASIC INFORMATION
-   ============================================================ */
-
-function loadSavedBasicInfo() {
-
-    try {
-
-        const saved =
-            localStorage.getItem(
-                "wanderlust_basic_trip"
-            );
-
-
-        if (!saved) {
-
-            return null;
-
-        }
-
-
-        const parsed =
-            JSON.parse(
-                saved
-            );
-
-
-        if (
-            !parsed ||
-            typeof parsed !== "object"
-        ) {
-
-            return null;
-
-        }
-
-
-        return parsed;
-
-    } catch (error) {
-
-        console.warn(
-            "Unable to load saved trip information:",
-            error
-        );
-
-
-        return null;
-
-    }
-
-}
-
-
-/* ============================================================
-   PUT SAVED BASIC INFORMATION INTO FORM
-   ============================================================ */
-
-function loadBasicInformationIntoForm() {
-
-    if (!basicTripData) {
-
-        return;
-
-    }
-
-
-    const data =
-        basicTripData;
-
-
-    const fields = {
-
-        departure_location:
-            data.departure_location,
-
-        country:
-            data.country,
-
-        travelers:
-            data.travelers,
-
-        duration_days:
-            data.duration_days,
-
-        travel_dates:
-            data.travel_dates,
-
-        maximum_total_travel_time:
-            data.maximum_total_travel_time,
-
-        maximum_distance:
-            data.maximum_distance,
-
-        transportation_preference:
-            data.transportation_preference,
-
-        accommodation_preference:
-            data.accommodation_preference,
-
-        safety_requirement:
-            data.safety_requirement,
-
-        budget:
-            data.budget
-
-    };
-
-
-    Object.entries(
-        fields
-    ).forEach(
-        ([
-            id,
-            fieldValue
-        ]) => {
-
-            const element =
-                document.getElementById(
-                    id
-                );
-
-
-            if (
-                element &&
-                fieldValue !== undefined &&
-                fieldValue !== null
-            ) {
-
-                element.value =
-                    fieldValue;
-
-            }
-
-        }
-    );
-
-
-    /*
-     * Restore trip scope.
-     */
-
-    if (
-        data.trip_scope
-    ) {
-
-        const radio =
-            document.querySelector(
-                `input[name="trip_scope"][value="${CSS.escape(data.trip_scope)}"]`
-            );
-
-
-        if (radio) {
-
-            radio.checked =
-                true;
-
-        }
-
-    }
-
-
-    updateCountryField();
-
-}
-
-
-/* ============================================================
    VALIDATE BASIC INFORMATION
    ============================================================ */
 
@@ -1238,48 +1126,519 @@ function validateBasicTripData(
 
 
 /* ============================================================
-   BUILD COMPLETE TRIP DATA
+   SAVE BASIC INFORMATION TO SQLITE
    ============================================================ */
 
-function buildTripData() {
+async function saveBasicInformation() {
 
-    /*
-     * IMPORTANT:
-     *
-     * Basic information and user preferences
-     * are intentionally handled separately.
-     */
-
-    const basic =
-        basicTripData ||
+    const data =
         buildBasicTripData();
 
 
-    const preferences =
-        value(
-            "user_preferences"
+    const validationError =
+        validateBasicTripData(
+            data
         );
+
+
+    if (validationError) {
+
+        setMessage(
+            "basicError",
+            validationError,
+            true
+        );
+
+        return false;
+
+    }
+
+
+    const button =
+        document.getElementById(
+            "continueToPlanButton"
+        );
+
+
+    if (button) {
+
+        button.disabled =
+            true;
+
+        button.textContent =
+            "SAVING...";
+
+    }
+
+
+    setMessage(
+        "basicError",
+        "",
+        false
+    );
+
+
+    setMessage(
+        "basicSuccess",
+        "Saving your trip information...",
+        true
+    );
+
+
+    try {
+
+        /*
+         * THIS IS THE IMPORTANT CHANGE.
+         *
+         * The data is now sent to Flask.
+         *
+         * Flask saves it into SQLite.
+         */
+
+        const result =
+            await API.saveBasicTrip(
+                data
+            );
+
+
+        if (
+            !result ||
+            !result.trip_id
+        ) {
+
+            throw new Error(
+                "The database did not return a trip ID."
+            );
+
+        }
+
+
+        /*
+         * Store the database ID.
+         */
+
+        currentTripId =
+            Number(
+                result.trip_id
+            );
+
+
+        localStorage.setItem(
+            STORAGE_KEYS.tripId,
+            String(
+                currentTripId
+            )
+        );
+
+
+        /*
+         * Keep a local copy as well.
+         *
+         * This is only a convenience/cache.
+         * SQLite is now the real source of truth.
+         */
+
+        basicTripData =
+            result.trip ||
+            data;
+
+
+        try {
+
+            localStorage.setItem(
+                STORAGE_KEYS.basicTrip,
+                JSON.stringify(
+                    basicTripData
+                )
+            );
+
+        } catch (error) {
+
+            console.warn(
+                "Unable to cache basic information:",
+                error
+            );
+
+        }
+
+
+        setMessage(
+            "basicSuccess",
+            "Basic trip information saved.",
+            true
+        );
+
+
+        /*
+         * IMPORTANT:
+         *
+         * Continue directly to the
+         * separate Plan Trip scene.
+         */
+
+        showPage(
+            "planner"
+        );
+
+
+        return true;
+
+    } catch (error) {
+
+        console.error(
+            "SAVE BASIC INFORMATION ERROR:",
+            error
+        );
+
+
+        setMessage(
+            "basicError",
+            error.message ||
+            "Unable to save your basic trip information.",
+            true
+        );
+
+
+        return false;
+
+    } finally {
+
+        if (button) {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "CONTINUE TO PLAN TRIP →";
+
+        }
+
+    }
+
+}
+
+
+/* ============================================================
+   LOAD BASIC INFORMATION FROM SQLITE
+   ============================================================ */
+
+async function loadBasicInformationFromDatabase() {
+
+    let tripId =
+        currentTripId;
+
+
+    if (!tripId) {
+
+        tripId =
+            localStorage.getItem(
+                STORAGE_KEYS.tripId
+            );
+
+    }
+
+
+    if (!tripId) {
+
+        return null;
+
+    }
+
+
+    try {
+
+        const trip =
+            await API.getBasicTrip(
+                tripId
+            );
+
+
+        if (!trip) {
+
+            return null;
+
+        }
+
+
+        currentTripId =
+            Number(
+                trip.id
+            );
+
+
+        basicTripData =
+            trip;
+
+
+        try {
+
+            localStorage.setItem(
+                STORAGE_KEYS.tripId,
+                String(
+                    currentTripId
+                )
+            );
+
+
+            localStorage.setItem(
+                STORAGE_KEYS.basicTrip,
+                JSON.stringify(
+                    trip
+                )
+            );
+
+        } catch (error) {
+
+            console.warn(
+                "Unable to update local cache:",
+                error
+            );
+
+        }
+
+
+        return trip;
+
+    } catch (error) {
+
+        console.warn(
+            "Unable to load trip from database:",
+            error
+        );
+
+
+        return null;
+
+    }
+
+}
+
+
+/* ============================================================
+   LOAD LOCAL BASIC INFORMATION
+   ============================================================ */
+
+function loadSavedBasicInfo() {
+
+    try {
+
+        const saved =
+            localStorage.getItem(
+                STORAGE_KEYS.basicTrip
+            );
+
+
+        if (!saved) {
+
+            return null;
+
+        }
+
+
+        const parsed =
+            JSON.parse(
+                saved
+            );
+
+
+        if (
+            !parsed ||
+            typeof parsed !==
+                "object"
+        ) {
+
+            return null;
+
+        }
+
+
+        return parsed;
+
+    } catch (error) {
+
+        console.warn(
+            "Unable to load saved trip information:",
+            error
+        );
+
+
+        return null;
+
+    }
+
+}
+
+
+/* ============================================================
+   PUT BASIC INFORMATION INTO FORM
+   ============================================================ */
+
+function loadBasicInformationIntoForm(
+    data = null
+) {
+
+    const trip =
+        data ||
+        basicTripData ||
+        loadSavedBasicInfo();
+
+
+    if (!trip) {
+
+        return;
+
+    }
+
+
+    const fields = {
+
+        departure_location:
+            trip.departure_location,
+
+        country:
+            trip.country,
+
+        travelers:
+            trip.travelers,
+
+        duration_days:
+            trip.duration_days,
+
+        travel_dates:
+            trip.travel_dates,
+
+        maximum_total_travel_time:
+            trip.maximum_total_travel_time,
+
+        maximum_distance:
+            trip.maximum_distance,
+
+        transportation_preference:
+            trip.transportation_preference,
+
+        accommodation_preference:
+            trip.accommodation_preference,
+
+        safety_requirement:
+            trip.safety_requirement,
+
+        budget:
+            trip.budget,
+
+        other:
+            Array.isArray(
+                trip.other
+            )
+                ? trip.other.join(
+                    ", "
+                )
+                : trip.other ||
+                  trip.other_requirements ||
+                  ""
+
+    };
+
+
+    Object.entries(
+        fields
+    ).forEach(
+        ([
+            id,
+            fieldValue
+        ]) => {
+
+            const element =
+                document.getElementById(
+                    id
+                );
+
+
+            if (
+                element &&
+                fieldValue !==
+                    undefined &&
+                fieldValue !==
+                    null
+            ) {
+
+                element.value =
+                    fieldValue;
+
+            }
+
+        }
+    );
+
+
+    if (
+        trip.trip_scope
+    ) {
+
+        const radio =
+            document.querySelector(
+                `input[name="trip_scope"][value="${CSS.escape(trip.trip_scope)}"]`
+            );
+
+
+        if (radio) {
+
+            radio.checked =
+                true;
+
+        }
+
+    }
+
+
+    updateCountryField();
+
+}
+
+
+/* ============================================================
+   BUILD COMPLETE TRIP DATA
+   ============================================================ */
+
+function buildTripData(
+    basic,
+    preferences
+) {
+
+    const basicInformation =
+        basic ||
+        basicTripData;
 
 
     return {
 
-        ...basic,
+        /*
+         * Database-backed basic information.
+         */
+
+        ...basicInformation,
+
 
         /*
-         * This MUST remain a plain string.
+         * Planning scene information.
          *
-         * Do NOT turn this into:
-         *
-         * {
-         *     user_input: preferences
-         * }
-         *
-         * because MoodAgent expects a string.
+         * THIS MUST BE A STRING.
          */
 
         user_preferences:
             String(
-                preferences
+                preferences ||
+                ""
+            ).trim(),
+
+        /*
+         * Compatibility with possible
+         * backend naming.
+         */
+
+        preferences:
+            String(
+                preferences ||
+                ""
             ).trim()
 
     };
@@ -1337,40 +1696,6 @@ function validateTripData(
 
 
 /* ============================================================
-   SAVE BASIC INFORMATION BUTTON
-   ============================================================ */
-
-async function handleBasicInformationSubmit(
-    event
-) {
-
-    event.preventDefault();
-
-
-    const saved =
-        saveBasicInformation();
-
-
-    if (!saved) {
-
-        return;
-
-    }
-
-
-    /*
-     * After saving, go to the actual
-     * planning scene.
-     */
-
-    showPage(
-        "planner"
-    );
-
-}
-
-
-/* ============================================================
    START TRIP
    ============================================================ */
 
@@ -1391,34 +1716,72 @@ async function startTrip() {
 
 
     /*
-     * Make sure the latest basic
-     * information is available.
+     * ALWAYS try to recover the basic
+     * information from SQLite first.
      */
 
-    if (!basicTripData) {
+    let basic =
+        await loadBasicInformationFromDatabase();
 
-        basicTripData =
+
+    /*
+     * If the database record could not
+     * be retrieved, use the cached data.
+     */
+
+    if (!basic) {
+
+        basic =
+            basicTripData ||
             loadSavedBasicInfo();
 
     }
 
 
     /*
-     * If the user never saved the
-     * basic information, save the
-     * current form values.
+     * If there is still no basic data,
+     * do not send an incomplete request.
      */
 
-    if (!basicTripData) {
+    if (!basic) {
 
-        basicTripData =
-            buildBasicTripData();
+        setMessage(
+            "plannerError",
+            "Please complete Basic Information first.",
+            true
+        );
+
+
+        showPage(
+            "basic"
+        );
+
+
+        return;
 
     }
 
 
+    basicTripData =
+        basic;
+
+
+    /*
+     * Get ONLY the planning preference
+     * from the Plan Trip scene.
+     */
+
+    const preferences =
+        value(
+            "user_preferences"
+        );
+
+
     const data =
-        buildTripData();
+        buildTripData(
+            basic,
+            preferences
+        );
 
 
     const validationError =
@@ -1431,7 +1794,8 @@ async function startTrip() {
 
         setMessage(
             "plannerError",
-            validationError
+            validationError,
+            true
         );
 
         return;
@@ -1450,7 +1814,6 @@ async function startTrip() {
         button.disabled =
             true;
 
-
         button.textContent =
             "PLANNING...";
 
@@ -1459,26 +1822,42 @@ async function startTrip() {
 
     setMessage(
         "plannerLoading",
-        "AI systems are processing your trip..."
+        "AI systems are processing your trip...",
+        true
     );
 
 
     try {
 
-        /*
-         * Flask:
-         *
-         * /api/trip/start
-         *
-         * receives a JSON object.
-         *
-         * user_preferences is a STRING.
-         */
-
         currentTrip =
             await API.startTrip(
                 data
             );
+
+
+        /*
+         * Keep the trip ID synchronized.
+         */
+
+        if (
+            currentTrip &&
+            currentTrip.trip_id
+        ) {
+
+            currentTripId =
+                Number(
+                    currentTrip.trip_id
+                );
+
+
+            localStorage.setItem(
+                STORAGE_KEYS.tripId,
+                String(
+                    currentTripId
+                )
+            );
+
+        }
 
 
         renderTripResults(
@@ -1516,7 +1895,8 @@ async function startTrip() {
                 () => {
 
                     resultsSection.scrollIntoView({
-                        behavior: "smooth"
+                        behavior:
+                            "smooth"
                     });
 
                 },
@@ -1536,7 +1916,8 @@ async function startTrip() {
         setMessage(
             "plannerError",
             error.message ||
-            "Unable to start the travel planning process."
+            "Unable to start the travel planning process.",
+            true
         );
 
 
@@ -1552,7 +1933,6 @@ async function startTrip() {
 
             button.disabled =
                 false;
-
 
             button.textContent =
                 "FIND TRIPS →";
@@ -1597,18 +1977,32 @@ function getCandidates(
     ) {
 
         return trip.candidates.map(
-            name => ({
+            candidate => {
 
-                name:
-                    name,
+                if (
+                    typeof candidate ===
+                    "string"
+                ) {
 
-                country:
-                    "",
+                    return {
 
-                reason:
-                    ""
+                        name:
+                            candidate,
 
-            })
+                        country:
+                            "",
+
+                        reason:
+                            ""
+
+                    };
+
+                }
+
+
+                return candidate;
+
+            }
         );
 
     }
@@ -1708,7 +2102,8 @@ function renderTripResults(
                     <h3>
 
                         ${escapeHtml(
-                            candidate.name
+                            candidate.name ||
+                            "Unknown destination"
                         )}
 
                     </h3>
@@ -1748,6 +2143,8 @@ function renderTripResults(
                                     trip
                                         ?.trip_information
                                         ?.trip_scope ||
+                                    basicTripData
+                                        ?.trip_scope ||
                                     "—"
                                 )}
 
@@ -1768,6 +2165,8 @@ function renderTripResults(
                                     trip
                                         ?.trip_information
                                         ?.travelers ||
+                                    basicTripData
+                                        ?.travelers ||
                                     "—"
                                 )}
 
@@ -1787,6 +2186,8 @@ function renderTripResults(
                                 ${escapeHtml(
                                     trip
                                         ?.trip_information
+                                        ?.duration_days ||
+                                    basicTripData
                                         ?.duration_days ||
                                     "—"
                                 )}
@@ -1840,10 +2241,6 @@ function renderTripResults(
         }
     );
 
-
-    /*
-     * AI comparison.
-     */
 
     if (
         trip &&
@@ -2048,7 +2445,8 @@ async function selectTrip(
         if (selectionPanel) {
 
             selectionPanel.scrollIntoView({
-                behavior: "smooth"
+                behavior:
+                    "smooth"
             });
 
         }
@@ -2385,7 +2783,6 @@ async function confirmTrip() {
         button.disabled =
             true;
 
-
         button.textContent =
             "CONFIRMING...";
 
@@ -2431,7 +2828,6 @@ async function confirmTrip() {
             button.disabled =
                 false;
 
-
             button.textContent =
                 "CONFIRM TRIP";
 
@@ -2443,7 +2839,1360 @@ async function confirmTrip() {
 
 
 /* ============================================================
+   SEARCH DESTINATION SCENE
+   ============================================================ */
+
+async function searchDestination() {
+
+    const input =
+        document.getElementById(
+            "destination-search"
+        );
+
+
+    if (!input) {
+
+        return;
+
+    }
+
+
+    const query =
+        input.value.trim();
+
+
+    if (!query) {
+
+        setMessage(
+            "searchError",
+            "Please enter a destination.",
+            true
+        );
+
+        return;
+
+    }
+
+
+    setMessage(
+        "searchError",
+        "",
+        false
+    );
+
+
+    const result =
+        document.getElementById(
+            "search-results"
+        );
+
+
+    if (result) {
+
+        result.innerHTML = `
+
+            <div class="panel">
+
+                Searching for
+                <strong>
+                    ${escapeHtml(query)}
+                </strong>...
+
+            </div>
+
+        `;
+
+    }
+
+
+    try {
+
+        const destinations =
+            await API.searchDestinations(
+                query
+            );
+
+
+        renderSearchResults(
+            destinations
+        );
+
+    } catch (error) {
+
+        console.error(
+            "SEARCH DESTINATION ERROR:",
+            error
+        );
+
+
+        if (result) {
+
+            result.innerHTML = `
+
+                <div class="error"
+                     style="display:block;">
+
+                    ${escapeHtml(
+                        error.message
+                    )}
+
+                </div>
+
+            `;
+
+        }
+
+    }
+
+}
+
+
+/* ============================================================
+   SEARCH RESULTS
+   ============================================================ */
+
+function renderSearchResults(
+    destinations
+) {
+
+    const container =
+        document.getElementById(
+            "search-results"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML =
+        "";
+
+
+    if (
+        !Array.isArray(
+            destinations
+        ) ||
+        destinations.length === 0
+    ) {
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                No destinations found.
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    destinations.forEach(
+        destination => {
+
+            const card =
+                document.createElement(
+                    "article"
+                );
+
+
+            card.className =
+                "destination-card";
+
+
+            card.innerHTML = `
+
+                <img
+                    src="${escapeHtml(
+                        destination.image_url ||
+                        ""
+                    )}"
+                    alt="${escapeHtml(
+                        destination.name
+                    )}"
+                    onerror="
+                        this.style.display='none';
+                    "
+                >
+
+
+                <h3>
+
+                    ${escapeHtml(
+                        destination.name
+                    )}
+
+                </h3>
+
+
+                <p>
+
+                    ${escapeHtml(
+                        destination.country ||
+                        ""
+                    )}
+
+                </p>
+
+
+                <button
+                    class="btn btn-blue"
+                >
+
+                    VIEW DESTINATION
+
+                </button>
+
+            `;
+
+
+            card
+                .querySelector(
+                    "button"
+                )
+                .addEventListener(
+                    "click",
+                    () => {
+
+                        openDestination(
+                            destination
+                        );
+
+                    }
+                );
+
+
+            container.appendChild(
+                card
+            );
+
+        }
+    );
+
+}
+
+
+/* ============================================================
    DESTINATION DETAILS
+   ============================================================ */
+
+function openDestination(
+    destination
+) {
+
+    /*
+     * This is the dedicated
+     * Search Destination scene.
+     */
+
+    showPage(
+        "search-destination"
+    );
+
+
+    const details =
+        document.getElementById(
+            "destination-details"
+        );
+
+
+    if (!details) {
+
+        return;
+
+    }
+
+
+    details.innerHTML = `
+
+        <img
+            src="${escapeHtml(
+                destination.image_url ||
+                ""
+            )}"
+            alt="${escapeHtml(
+                destination.name ||
+                "Destination"
+            )}"
+            onerror="
+                this.style.display='none';
+            "
+        >
+
+
+        <h2>
+
+            ${escapeHtml(
+                destination.name ||
+                ""
+            )}
+
+        </h2>
+
+
+        <p>
+
+            ${escapeHtml(
+                destination.country ||
+                ""
+            )}
+
+        </p>
+
+
+        <p>
+
+            ${escapeHtml(
+                destination.description ||
+                ""
+            )}
+
+        </p>
+
+
+        ${
+            destination.region
+                ?
+                `
+                    <p>
+                        Region:
+                        ${escapeHtml(
+                            destination.region
+                        )}
+                    </p>
+                `
+                :
+                ""
+        }
+
+
+        ${
+            destination.latitude !==
+                undefined
+                &&
+            destination.longitude !==
+                undefined
+                ?
+                `
+                    <p>
+                        Coordinates:
+                        ${escapeHtml(
+                            destination.latitude
+                        )},
+                        ${escapeHtml(
+                            destination.longitude
+                        )}
+                    </p>
+                `
+                :
+                ""
+        }
+
+
+        ${
+            destination.photo_credit
+                ?
+                `
+                    <p>
+                        Photo:
+                        ${escapeHtml(
+                            destination.photo_credit
+                        )}
+                    </p>
+                `
+                :
+                ""
+        }
+
+    `;
+
+}
+
+
+/* ============================================================
+   HOME DESTINATIONS
+   ============================================================ */
+
+async function loadHomeDestinations() {
+
+    const container =
+        document.getElementById(
+            "homeDestinations"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    /*
+     * Don't show a long blocking loader.
+     *
+     * SQLite already contains the
+     * preloaded destinations.
+     */
+
+    try {
+
+        const destinations =
+            await API.homeDestinations();
+
+
+        renderHomeDestinations(
+            destinations
+        );
+
+    } catch (error) {
+
+        console.error(
+            "HOME DESTINATION ERROR:",
+            error
+        );
+
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                Unable to load destinations.
+
+                <p style="color:var(--muted);">
+
+                    ${escapeHtml(
+                        error.message
+                    )}
+
+                </p>
+
+            </div>
+
+        `;
+
+    }
+
+}
+
+
+/* ============================================================
+   RENDER HOME DESTINATIONS
+   ============================================================ */
+
+function renderHomeDestinations(
+    destinations
+) {
+
+    const container =
+        document.getElementById(
+            "homeDestinations"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML =
+        "";
+
+
+    if (
+        !Array.isArray(
+            destinations
+        ) ||
+        destinations.length === 0
+    ) {
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                No destinations available.
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    destinations.forEach(
+        destination => {
+
+            const card =
+                document.createElement(
+                    "article"
+                );
+
+
+            card.className =
+                "destination-card";
+
+
+            card.innerHTML = `
+
+                <img
+                    src="${escapeHtml(
+                        destination.image_url ||
+                        ""
+                    )}"
+                    alt="${escapeHtml(
+                        destination.name
+                    )}"
+                    loading="lazy"
+                    onerror="
+                        this.style.display='none';
+                    "
+                >
+
+
+                <div class="destination-overlay">
+
+                    <h3>
+
+                        ${escapeHtml(
+                            destination.name
+                        )}
+
+                    </h3>
+
+
+                    <p>
+
+                        ${escapeHtml(
+                            destination.description ||
+                            ""
+                        )}
+
+                    </p>
+
+                </div>
+
+            `;
+
+
+            /*
+             * Home destination is clickable.
+             */
+
+            card.addEventListener(
+                "click",
+                () => {
+
+                    openDestination(
+                        destination
+                    );
+
+                }
+            );
+
+
+            container.appendChild(
+                card
+            );
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   RANDOM DESTINATIONS
+   ============================================================ */
+
+async function loadRandomDestinations() {
+
+    const container =
+        document.getElementById(
+            "random-destinations"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    try {
+
+        const destinations =
+            await API.randomDestinations();
+
+
+        container.innerHTML =
+            "";
+
+
+        if (
+            !Array.isArray(
+                destinations
+            ) ||
+            destinations.length === 0
+        ) {
+
+            container.innerHTML = `
+
+                <div class="panel">
+
+                    No random destinations are
+                    currently available.
+
+                </div>
+
+            `;
+
+            return;
+
+        }
+
+
+        destinations.forEach(
+            destination => {
+
+                const card =
+                    document.createElement(
+                        "article"
+                    );
+
+
+                card.className =
+                    "destination-card";
+
+
+                card.innerHTML = `
+
+                    <img
+                        src="${escapeHtml(
+                            destination.image_url ||
+                            ""
+                        )}"
+                        alt="${escapeHtml(
+                            destination.name
+                        )}"
+                        loading="lazy"
+                        onerror="
+                            this.style.display='none';
+                        "
+                    >
+
+
+                    <h3>
+
+                        ${escapeHtml(
+                            destination.name
+                        )}
+
+                    </h3>
+
+
+                    <p>
+
+                        ${escapeHtml(
+                            destination.country ||
+                            ""
+                        )}
+
+                    </p>
+
+
+                    <button
+                        class="btn btn-blue"
+                    >
+
+                        EXPLORE
+
+                    </button>
+
+                `;
+
+
+                card
+                    .querySelector(
+                        "button"
+                    )
+                    .addEventListener(
+                        "click",
+                        event => {
+
+                            event.stopPropagation();
+
+                            openDestination(
+                                destination
+                            );
+
+                        }
+                    );
+
+
+                container.appendChild(
+                    card
+                );
+
+            }
+        );
+
+    } catch (error) {
+
+        console.error(
+            "RANDOM DESTINATION ERROR:",
+            error
+        );
+
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                Unable to load destinations.
+
+                <p style="color:var(--muted);">
+
+                    ${escapeHtml(
+                        error.message
+                    )}
+
+                </p>
+
+            </div>
+
+        `;
+
+    }
+
+}
+
+
+/* ============================================================
+   RANDOMIZE
+   ============================================================ */
+
+async function randomizeDestinations() {
+
+    await loadRandomDestinations();
+
+}
+
+
+/* ============================================================
+   RANDOM SINGLE DESTINATION
+   ============================================================ */
+
+async function loadRandomDestination() {
+
+    const container =
+        document.getElementById(
+            "randomDestination"
+        );
+
+
+    if (!container) {
+
+        /*
+         * If the page uses the plural
+         * random destination container,
+         * use that instead.
+         */
+
+        await loadRandomDestinations();
+
+        return;
+
+    }
+
+
+    container.innerHTML = `
+
+        <div class="panel">
+
+            Finding somewhere unexpected...
+
+        </div>
+
+    `;
+
+
+    try {
+
+        const destination =
+            await API.randomDestination();
+
+
+        renderRandomDestination(
+            destination
+        );
+
+    } catch (error) {
+
+        console.error(
+            "RANDOM DESTINATION ERROR:",
+            error
+        );
+
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                Unable to load a random destination.
+
+                <p style="color:var(--muted);">
+
+                    ${escapeHtml(
+                        error.message
+                    )}
+
+                </p>
+
+            </div>
+
+        `;
+
+    }
+
+}
+
+
+/* ============================================================
+   RENDER RANDOM SINGLE DESTINATION
+   ============================================================ */
+
+function renderRandomDestination(
+    destination
+) {
+
+    const container =
+        document.getElementById(
+            "randomDestination"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    if (!destination) {
+
+        container.innerHTML = `
+
+            <div class="panel">
+
+                No random destination was returned.
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    container.innerHTML = `
+
+        <article
+            class="destination-card"
+        >
+
+            <img
+                src="${escapeHtml(
+                    destination.image_url ||
+                    ""
+                )}"
+                alt="${escapeHtml(
+                    destination.name ||
+                    "Destination"
+                )}"
+                loading="lazy"
+            >
+
+
+            <div class="destination-overlay">
+
+                <h3>
+
+                    ${escapeHtml(
+                        destination.name
+                    )}
+
+                </h3>
+
+
+                <p>
+
+                    ${escapeHtml(
+                        destination.country ||
+                        ""
+                    )}
+
+                </p>
+
+
+                <p>
+
+                    ${escapeHtml(
+                        destination.description ||
+                        ""
+                    )}
+
+                </p>
+
+
+                <button
+                    class="btn btn-blue"
+                    onclick="openDestinationById(${destination.id})"
+                >
+
+                    EXPLORE
+
+                </button>
+
+            </div>
+
+        </article>
+
+    `;
+
+}
+
+
+/* ============================================================
+   OPEN DESTINATION BY DATABASE ID
+   ============================================================ */
+
+async function openDestinationById(
+    destinationId
+) {
+
+    try {
+
+        const destination =
+            await API.destination(
+                destinationId
+            );
+
+
+        openDestination(
+            destination
+        );
+
+    } catch (error) {
+
+        alert(
+            error.message
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   SEARCH BOX
+   ============================================================ */
+
+function initializeSearch() {
+
+    const searchBox =
+        document.getElementById(
+            "searchBox"
+        );
+
+
+    if (!searchBox) {
+
+        return;
+
+    }
+
+
+    searchBox.addEventListener(
+        "input",
+        event => {
+
+            const query =
+                event.target.value
+                    .toLowerCase()
+                    .trim();
+
+
+            document
+                .querySelectorAll(
+                    ".destination-card"
+                )
+                .forEach(
+                    card => {
+
+                        card.style.display =
+                            !query ||
+                            card.textContent
+                                .toLowerCase()
+                                .includes(
+                                    query
+                                )
+                                ? ""
+                                : "none";
+
+                    }
+                );
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   NAVIGATION INITIALIZATION
+   ============================================================ */
+
+function initializeNavigation() {
+
+    document
+        .querySelectorAll(
+            ".nav-button"
+        )
+        .forEach(
+            button => {
+
+                button.addEventListener(
+                    "click",
+                    async () => {
+
+                        const page =
+                            button.dataset.page;
+
+
+                        /*
+                         * When Basic Information
+                         * is opened, retrieve the
+                         * database copy first.
+                         */
+
+                        if (
+                            page ===
+                            "basic"
+                        ) {
+
+                            const databaseTrip =
+                                await loadBasicInformationFromDatabase();
+
+
+                            loadBasicInformationIntoForm(
+                                databaseTrip ||
+                                basicTripData
+                            );
+
+                        }
+
+
+                        /*
+                         * Random Exposure should
+                         * immediately have random
+                         * destinations.
+                         */
+
+                        if (
+                            page ===
+                            "random"
+                        ) {
+
+                            showPage(
+                                "random"
+                            );
+
+
+                            await loadRandomDestinations();
+
+                            return;
+
+                        }
+
+
+                        showPage(
+                            page
+                        );
+
+                    }
+                );
+
+            }
+        );
+
+}
+
+
+/* ============================================================
+   TRIP FORM INITIALIZATION
+   ============================================================ */
+
+function initializeTripForm() {
+
+    const departure =
+        document.getElementById(
+            "departure_location"
+        );
+
+
+    if (departure) {
+
+        departure.addEventListener(
+            "input",
+            updateCountryField
+        );
+
+    }
+
+
+    document
+        .querySelectorAll(
+            'input[name="trip_scope"]'
+        )
+        .forEach(
+            input => {
+
+                input.addEventListener(
+                    "change",
+                    updateCountryField
+                );
+
+            }
+        );
+
+
+    /* --------------------------------------------------------
+       BASIC INFORMATION FORM
+    -------------------------------------------------------- */
+
+    const basicForm =
+        document.getElementById(
+            "basicInformationForm"
+        );
+
+
+    if (basicForm) {
+
+        basicForm.addEventListener(
+            "submit",
+            async event => {
+
+                event.preventDefault();
+
+                await saveBasicInformation();
+
+            }
+        );
+
+    }
+
+
+    /* --------------------------------------------------------
+       PLANNING FORM
+    -------------------------------------------------------- */
+
+    const plannerForm =
+        document.getElementById(
+            "tripForm"
+        );
+
+
+    if (plannerForm) {
+
+        plannerForm.addEventListener(
+            "submit",
+            async event => {
+
+                event.preventDefault();
+
+                await startTrip();
+
+            }
+        );
+
+    }
+
+
+    /*
+     * Support a button even if the HTML
+     * doesn't wrap the planning controls
+     * inside a form.
+     */
+
+    const startButton =
+        document.getElementById(
+            "startTripButton"
+        );
+
+
+    if (
+        startButton &&
+        !plannerForm
+    ) {
+
+        startButton.addEventListener(
+            "click",
+            async event => {
+
+                event.preventDefault();
+
+                await startTrip();
+
+            }
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   RANDOM PAGE INITIALIZATION
+   ============================================================ */
+
+function initializeRandomPage() {
+
+    const randomizeButton =
+        document.getElementById(
+            "randomizeButton"
+        );
+
+
+    if (randomizeButton) {
+
+        randomizeButton.addEventListener(
+            "click",
+            async () => {
+
+                randomizeButton.disabled =
+                    true;
+
+
+                try {
+
+                    await loadRandomDestinations();
+
+                } finally {
+
+                    randomizeButton.disabled =
+                        false;
+
+                }
+
+            }
+        );
+
+    }
+
+
+    /*
+     * Compatibility with the older
+     * randomize-button ID.
+     */
+
+    const oldRandomButton =
+        document.getElementById(
+            "randomize-button"
+        );
+
+
+    if (
+        oldRandomButton &&
+        oldRandomButton !==
+            randomizeButton
+    ) {
+
+        oldRandomButton.addEventListener(
+            "click",
+            randomizeDestinations
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+
+function initializeModal() {
+
+    const modal =
+        document.getElementById(
+            "destinationModal"
+        );
+
+
+    if (!modal) {
+
+        return;
+
+    }
+
+
+    modal.addEventListener(
+        "click",
+        event => {
+
+            if (
+                event.target.id ===
+                "destinationModal"
+            ) {
+
+                closeModal();
+
+            }
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   CLOSE MODAL
+   ============================================================ */
+
+function closeModal() {
+
+    const modal =
+        document.getElementById(
+            "destinationModal"
+        );
+
+
+    if (modal) {
+
+        modal.classList.remove(
+            "open"
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   SHOW CANDIDATE DESTINATION MODAL
    ============================================================ */
 
 function showDestination(
@@ -2495,7 +4244,8 @@ function showDestination(
     if (modalTitle) {
 
         modalTitle.textContent =
-            candidate.name;
+            candidate.name ||
+            "";
 
     }
 
@@ -2524,86 +4274,83 @@ function showDestination(
         );
 
 
-    if (!mapList) {
+    if (mapList) {
 
-        return;
-
-    }
-
-
-    const matchingMap =
-        Array.isArray(
-            currentTrip.map_data
-        )
-            ? currentTrip.map_data.find(
-                item => {
-
-                    return String(
-                        item.destination ||
-                        ""
-                    )
-                        .toLowerCase()
-                        .includes(
-                            String(
-                                candidate.name ||
-                                ""
-                            )
-                                .toLowerCase()
-                        );
-
-                }
+        const matchingMap =
+            Array.isArray(
+                currentTrip.map_data
             )
-            : null;
+                ? currentTrip.map_data.find(
+                    item => {
+
+                        return String(
+                            item.destination ||
+                            ""
+                        )
+                            .toLowerCase()
+                            .includes(
+                                String(
+                                    candidate.name ||
+                                    ""
+                                )
+                                    .toLowerCase()
+                            );
+
+                    }
+                )
+                : null;
 
 
-    if (matchingMap) {
+        if (matchingMap) {
 
-        const coords =
-            matchingMap.coordinates ||
-            {};
-
-
-        mapList.innerHTML = `
-
-            <div class="map-item">
-
-                <strong>
-                    MapTiler location
-                </strong>
+            const coords =
+                matchingMap.coordinates ||
+                {};
 
 
-                <div class="coordinates">
+            mapList.innerHTML = `
 
-                    Latitude:
-                    ${escapeHtml(
-                        coords.latitude
-                    )}
+                <div class="map-item">
 
-                    <br>
+                    <strong>
+                        MapTiler location
+                    </strong>
 
-                    Longitude:
-                    ${escapeHtml(
-                        coords.longitude
-                    )}
+
+                    <div class="coordinates">
+
+                        Latitude:
+                        ${escapeHtml(
+                            coords.latitude
+                        )}
+
+                        <br>
+
+                        Longitude:
+                        ${escapeHtml(
+                            coords.longitude
+                        )}
+
+                    </div>
 
                 </div>
 
-            </div>
+            `;
 
-        `;
+        } else {
 
-    } else {
+            mapList.innerHTML = `
 
-        mapList.innerHTML = `
+                <div class="map-item">
 
-            <div class="map-item">
+                    Geographic information was not
+                    returned for this candidate.
 
-                Geographic information was not
-                returned for this candidate.
+                </div>
 
-            </div>
+            `;
 
-        `;
+        }
 
     }
 
@@ -2617,29 +4364,6 @@ function showDestination(
     if (modal) {
 
         modal.classList.add(
-            "open"
-        );
-
-    }
-
-}
-
-
-/* ============================================================
-   CLOSE MODAL
-   ============================================================ */
-
-function closeModal() {
-
-    const modal =
-        document.getElementById(
-            "destinationModal"
-        );
-
-
-    if (modal) {
-
-        modal.classList.remove(
             "open"
         );
 
@@ -2761,7 +4485,7 @@ async function updateTrip(
 
     if (
         typeof changeRequest !==
-        "string" ||
+            "string" ||
         !changeRequest.trim()
     ) {
 
@@ -2778,7 +4502,8 @@ async function updateTrip(
 
         setMessage(
             "plannerLoading",
-            "Updating your travel options..."
+            "Updating your travel options...",
+            true
         );
 
 
@@ -2813,7 +4538,8 @@ async function updateTrip(
 
         setMessage(
             "plannerError",
-            error.message
+            error.message,
+            true
         );
 
 
@@ -3359,6 +5085,24 @@ async function deleteCurrentTrip() {
             null;
 
 
+        currentTripId =
+            null;
+
+
+        basicTripData =
+            null;
+
+
+        localStorage.removeItem(
+            STORAGE_KEYS.tripId
+        );
+
+
+        localStorage.removeItem(
+            STORAGE_KEYS.basicTrip
+        );
+
+
         updateBudgetUI();
 
 
@@ -3392,569 +5136,62 @@ async function deleteCurrentTrip() {
 
 
 /* ============================================================
-   HOME DESTINATIONS
-   ============================================================ */
-
-async function loadHomeDestinations() {
-
-    const container =
-        document.getElementById(
-            "homeDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-
-    }
-
-
-    container.innerHTML = `
-
-        <div class="panel">
-
-            Loading destinations...
-
-        </div>
-
-    `;
-
-
-    try {
-
-        const destinations =
-            await API.homeDestinations();
-
-
-        renderHomeDestinations(
-            destinations
-        );
-
-    } catch (error) {
-
-        console.error(
-            "HOME DESTINATION ERROR:",
-            error
-        );
-
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                Unable to load destinations.
-
-                <p style="color:var(--muted);">
-
-                    ${escapeHtml(
-                        error.message
-                    )}
-
-                </p>
-
-            </div>
-
-        `;
-
-    }
-
-}
-
-
-/* ============================================================
-   RENDER HOME DESTINATIONS
-   ============================================================ */
-
-function renderHomeDestinations(
-    destinations
-) {
-
-    const container =
-        document.getElementById(
-            "homeDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-
-    }
-
-
-    container.innerHTML =
-        "";
-
-
-    if (
-        !Array.isArray(
-            destinations
-        ) ||
-        !destinations.length
-    ) {
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                No destinations available.
-
-            </div>
-
-        `;
-
-        return;
-
-    }
-
-
-    destinations.forEach(
-        destination => {
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "destination-card";
-
-
-            const image =
-                destination.image_url ||
-                "";
-
-
-            card.innerHTML = `
-
-                <img
-                    src="${escapeHtml(image)}"
-                    alt="${escapeHtml(
-                        destination.name
-                    )}"
-                    onerror="
-                        this.style.display='none';
-                    "
-                >
-
-
-                <div class="destination-overlay">
-
-                    <h3>
-
-                        ${escapeHtml(
-                            destination.name
-                        )}
-
-                    </h3>
-
-
-                    <p>
-
-                        ${escapeHtml(
-                            destination.description ||
-                            ""
-                        )}
-
-                    </p>
-
-                </div>
-
-            `;
-
-
-            container.appendChild(
-                card
-            );
-
-        }
-    );
-
-}
-
-
-/* ============================================================
-   RANDOM DESTINATION
-   ============================================================ */
-
-async function loadRandomDestination() {
-
-    const container =
-        document.getElementById(
-            "randomDestination"
-        );
-
-
-    if (!container) {
-
-        return;
-
-    }
-
-
-    container.innerHTML = `
-
-        <div class="panel">
-
-            Finding somewhere unexpected...
-
-        </div>
-
-    `;
-
-
-    try {
-
-        const destination =
-            await API.randomDestination();
-
-
-        renderRandomDestination(
-            destination
-        );
-
-    } catch (error) {
-
-        console.error(
-            "RANDOM DESTINATION ERROR:",
-            error
-        );
-
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                Unable to load a random destination.
-
-                <p style="color:var(--muted);">
-
-                    ${escapeHtml(
-                        error.message
-                    )}
-
-                </p>
-
-            </div>
-
-        `;
-
-    }
-
-}
-
-
-/* ============================================================
-   RENDER RANDOM DESTINATION
-   ============================================================ */
-
-function renderRandomDestination(
-    destination
-) {
-
-    const container =
-        document.getElementById(
-            "randomDestination"
-        );
-
-
-    if (!container) {
-
-        return;
-
-    }
-
-
-    if (!destination) {
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                No random destination was returned.
-
-            </div>
-
-        `;
-
-        return;
-
-    }
-
-
-    container.innerHTML = `
-
-        <article class="destination-card">
-
-            <img
-                src="${escapeHtml(
-                    destination.image_url ||
-                    ""
-                )}"
-                alt="${escapeHtml(
-                    destination.name ||
-                    "Destination"
-                )}"
-            >
-
-
-            <div class="destination-overlay">
-
-                <h3>
-
-                    ${escapeHtml(
-                        destination.name
-                    )}
-
-                </h3>
-
-
-                <p>
-
-                    ${escapeHtml(
-                        destination.country ||
-                        ""
-                    )}
-
-                </p>
-
-
-                <p>
-
-                    ${escapeHtml(
-                        destination.description ||
-                        ""
-                    )}
-
-                </p>
-
-            </div>
-
-        </article>
-
-    `;
-
-}
-
-
-/* ============================================================
-   SEARCH
-   ============================================================ */
-
-function initializeSearch() {
-
-    const searchBox =
-        document.getElementById(
-            "searchBox"
-        );
-
-
-    if (!searchBox) {
-
-        return;
-
-    }
-
-
-    searchBox.addEventListener(
-        "input",
-        event => {
-
-            const query =
-                event.target.value
-                    .toLowerCase()
-                    .trim();
-
-
-            document
-                .querySelectorAll(
-                    ".destination-card"
-                )
-                .forEach(
-                    card => {
-
-                        card.style.display =
-                            !query ||
-                            card.textContent
-                                .toLowerCase()
-                                .includes(
-                                    query
-                                )
-                                ? ""
-                                : "none";
-
-                    }
-                );
-
-        }
-    );
-
-}
-
-
-/* ============================================================
-   TRIP FORM INITIALIZATION
-   ============================================================ */
-
-function initializeTripForm() {
-
-    const departure =
-        document.getElementById(
-            "departure_location"
-        );
-
-
-    if (departure) {
-
-        departure.addEventListener(
-            "input",
-            updateCountryField
-        );
-
-    }
-
-
-    document
-        .querySelectorAll(
-            'input[name="trip_scope"]'
-        )
-        .forEach(
-            input => {
-
-                input.addEventListener(
-                    "change",
-                    updateCountryField
-                );
-
-            }
-        );
-
-
-    /*
-     * BASIC INFORMATION FORM
-     */
-
-    const basicForm =
-        document.getElementById(
-            "basicInformationForm"
-        );
-
-
-    if (basicForm) {
-
-        basicForm.addEventListener(
-            "submit",
-            handleBasicInformationSubmit
-        );
-
-    }
-
-
-    /*
-     * PLANNING FORM
-     */
-
-    const plannerForm =
-        document.getElementById(
-            "tripForm"
-        );
-
-
-    if (plannerForm) {
-
-        plannerForm.addEventListener(
-            "submit",
-            event => {
-
-                event.preventDefault();
-
-                startTrip();
-
-            }
-        );
-
-    }
-
-}
-
-
-/* ============================================================
-   RANDOM PAGE INITIALIZATION
-   ============================================================ */
-
-function initializeRandomPage() {
-
-    const randomizeButton =
-        document.getElementById(
-            "randomizeButton"
-        );
-
-
-    if (randomizeButton) {
-
-        randomizeButton.addEventListener(
-            "click",
-            loadRandomDestination
-        );
-
-    }
-
-}
-
-
-/* ============================================================
-   MODAL INITIALIZATION
-   ============================================================ */
-
-function initializeModal() {
-
-    const modal =
-        document.getElementById(
-            "destinationModal"
-        );
-
-
-    if (!modal) {
-
-        return;
-
-    }
-
-
-    modal.addEventListener(
-        "click",
-        event => {
-
-            if (
-                event.target.id ===
-                "destinationModal"
-            ) {
-
-                closeModal();
-
-            }
-
-        }
-    );
-
-}
-
-
-/* ============================================================
    INITIALIZE BASIC INFORMATION
    ============================================================ */
 
-function initializeBasicInformation() {
+async function initializeBasicInformation() {
 
-    basicTripData =
-        loadSavedBasicInfo();
+    /*
+     * Recover trip ID from browser cache.
+     */
+
+    const savedTripId =
+        localStorage.getItem(
+            STORAGE_KEYS.tripId
+        );
+
+
+    if (savedTripId) {
+
+        currentTripId =
+            Number(
+                savedTripId
+            );
+
+    }
+
+
+    /*
+     * SQLite is the source of truth.
+     */
+
+    const databaseTrip =
+        await loadBasicInformationFromDatabase();
+
+
+    /*
+     * If SQLite has no record, fall
+     * back to local cache.
+     */
+
+    if (databaseTrip) {
+
+        basicTripData =
+            databaseTrip;
+
+    } else {
+
+        basicTripData =
+            loadSavedBasicInfo();
+
+    }
 
 
     if (basicTripData) {
 
-        loadBasicInformationIntoForm();
+        loadBasicInformationIntoForm(
+            basicTripData
+        );
 
     }
 
@@ -3969,46 +5206,89 @@ document.addEventListener(
     "DOMContentLoaded",
     async () => {
 
+        /*
+         * Initialize navigation.
+         */
+
         initializeNavigation();
+
+
+        /*
+         * Initialize forms.
+         */
 
         initializeTripForm();
 
+
+        /*
+         * Initialize random page.
+         */
+
         initializeRandomPage();
+
+
+        /*
+         * Initialize search.
+         */
 
         initializeSearch();
 
+
+        /*
+         * Initialize modal.
+         */
+
         initializeModal();
 
-        initializeBasicInformation();
+
+        /*
+         * Recover saved trip.
+         */
+
+        await initializeBasicInformation();
+
+
+        /*
+         * Update automatic country detection.
+         */
 
         updateCountryField();
+
+
+        /*
+         * Update budget UI.
+         */
 
         updateBudgetUI();
 
 
         /*
-         * Randomize the home destinations
-         * every time the website loads.
+         * HOME:
+         *
+         * Randomize the displayed
+         * destinations on every load.
          */
 
         await loadHomeDestinations();
 
 
         /*
-         * Load the first random exposure
-         * automatically.
+         * RANDOM EXPOSURE:
+         *
+         * Load a fresh random set.
          */
 
-        await loadRandomDestination();
+        await loadRandomDestinations();
 
 
         /*
-         * Optional Flask health check.
+         * Flask health check.
          */
 
         try {
 
             await API.health();
+
 
             console.log(
                 "Wanderlust Flask backend connected."

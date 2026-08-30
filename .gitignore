@@ -17,6 +17,12 @@ env/
 .DS_Store
 Thumbs.db
 
-#test cases
+# Test cases
 test_budget.py
 test_maps.py
+
+# Database
+wanderlust.db
+travel_planner.db
+travel_planner.db-shm
+travel_planner.db-wal
