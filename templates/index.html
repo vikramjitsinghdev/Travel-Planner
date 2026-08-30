@@ -2701,32 +2701,6 @@ h3 {
 
 
 <div class="header-actions">
-
-
-<input
-    class="search"
-    id="searchBox"
-    placeholder="Search destinations..."
-    type="search"
-/>
-
-
-<button
-    class="header-icon"
-    title="Notifications"
->
-    ♧
-</button>
-
-
-<button
-    class="header-icon"
-    title="Settings"
->
-    ⚙
-</button>
-
-
 </div>
 
 </header>
@@ -2782,7 +2756,7 @@ START PLANNING →
 
 <button
     class="btn btn-light"
-    onclick="showPage('random'); loadRandomDestinations()"
+    onclick="showPage('random')"
 >
 
 ✦ Surprise Me
@@ -2818,7 +2792,7 @@ START PLANNING →
 
 <button
     class="btn btn-light"
-    onclick="showPage('random'); loadRandomDestinations()"
+    onclick="showPage('random')"
 >
 
 VIEW ALL →
@@ -3694,11 +3668,9 @@ the AI planning workflow.
 <button
     class="btn btn-primary"
     id="randomizeButton"
-    onclick="loadRandomDestinations()"
+    type="button"
 >
-
-↻ RANDOMIZE
-
+    ↻ RANDOMIZE
 </button>
 
 
@@ -4187,6 +4159,7 @@ to the travel AI.
 </div>
 
 
+<!-- Wanderlust frontend controller -->
 <script
     src="{{ url_for('static', filename='script.js') }}"
 ></script>

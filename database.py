@@ -1,8 +1,12 @@
 import sqlite3
+import json
 import os
-import random
 from datetime import datetime
 
+
+# ==========================================================
+# DATABASE LOCATION
+# ==========================================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
@@ -19,6 +23,9 @@ DATABASE_PATH = os.path.join(
 # ==========================================================
 
 def get_connection():
+    """
+    Create a connection to the Wanderlust SQLite database.
+    """
 
     connection = sqlite3.connect(
         DATABASE_PATH
@@ -26,7 +33,84 @@ def get_connection():
 
     connection.row_factory = sqlite3.Row
 
+    # Enable foreign-key support.
+    connection.execute(
+        "PRAGMA foreign_keys = ON"
+    )
+
     return connection
+
+
+# ==========================================================
+# JSON HELPERS
+# ==========================================================
+
+def serialize_json(value):
+    """
+    Convert Python lists/dictionaries into JSON strings
+    so SQLite can store them safely.
+
+    Examples:
+
+        ["none"]
+            ↓
+        '["none"]'
+
+        {"nature": 1.0}
+            ↓
+        '{"nature": 1.0}'
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        (list, dict)
+    ):
+        return json.dumps(
+            value,
+            ensure_ascii=False
+        )
+
+    return str(value)
+
+
+def deserialize_json(value, default=None):
+    """
+    Convert a JSON string stored in SQLite back into
+    a Python list/dictionary.
+
+    If conversion fails, return the supplied default.
+    """
+
+    if value is None:
+        return (
+            [] if default is None
+            else default
+        )
+
+    if isinstance(
+        value,
+        (list, dict)
+    ):
+        return value
+
+    try:
+
+        return json.loads(
+            value
+        )
+
+    except (
+        TypeError,
+        json.JSONDecodeError
+    ):
+
+        return (
+            [] if default is None
+            else default
+        )
 
 
 # ==========================================================
@@ -34,14 +118,18 @@ def get_connection():
 # ==========================================================
 
 def initialize_database():
+    """
+    Create all Wanderlust database tables if they do not
+    already exist.
+    """
 
     connection = get_connection()
 
     cursor = connection.cursor()
 
-    # ------------------------------------------------------
-    # USER / TRIP INFORMATION
-    # ------------------------------------------------------
+    # ======================================================
+    # TRIPS
+    # ======================================================
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS trips (
@@ -53,6 +141,8 @@ def initialize_database():
             trip_scope TEXT,
 
             country TEXT,
+
+            region TEXT,
 
             travelers INTEGER,
 
@@ -84,10 +174,9 @@ def initialize_database():
         )
     """)
 
-
-    # ------------------------------------------------------
+    # ======================================================
     # DESTINATIONS
-    # ------------------------------------------------------
+    # ======================================================
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS destinations (
@@ -118,10 +207,9 @@ def initialize_database():
         )
     """)
 
-
-    # ------------------------------------------------------
+    # ======================================================
     # EXPENSES
-    # ------------------------------------------------------
+    # ======================================================
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS expenses (
@@ -142,14 +230,15 @@ def initialize_database():
 
             FOREIGN KEY (trip_id)
                 REFERENCES trips(id)
+                ON DELETE CASCADE
         )
     """)
-
 
     connection.commit()
 
     connection.close()
 
+    # Seed initial destinations.
     seed_destinations()
 
 
@@ -362,29 +451,44 @@ PRELOADED_DESTINATIONS = [
 ]
 
 
+# ==========================================================
+# SEED DESTINATIONS
+# ==========================================================
+
 def seed_destinations():
+    """
+    Insert the initial destination database.
+
+    Existing destinations are not duplicated.
+    """
 
     connection = get_connection()
 
     cursor = connection.cursor()
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM destinations"
-    )
-
-    count = cursor.fetchone()[0]
-
-    if count >= 20:
-
-        connection.close()
-
-        return
-
-
     for destination in PRELOADED_DESTINATIONS:
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM destinations
+            WHERE name = ?
+              AND country = ?
+            """,
+            (
+                destination["name"],
+                destination["country"]
+            )
+        )
+
+        existing = cursor.fetchone()
+
+        if existing:
+            continue
 
         cursor.execute("""
             INSERT INTO destinations (
+
                 name,
                 country,
                 region,
@@ -393,7 +497,9 @@ def seed_destinations():
                 longitude,
                 source,
                 created_at
+
             )
+
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
 
@@ -408,17 +514,31 @@ def seed_destinations():
 
         ))
 
-
     connection.commit()
 
     connection.close()
 
 
 # ==========================================================
-# TRIP CREATION
+# CREATE TRIP
 # ==========================================================
 
 def create_trip(data):
+    """
+    Create and save a new trip.
+
+    Important:
+    Lists/dictionaries are converted to JSON before
+    being inserted into SQLite.
+    """
+
+    if not isinstance(
+        data,
+        dict
+    ):
+        raise ValueError(
+            "Trip data must be a dictionary."
+        )
 
     connection = get_connection()
 
@@ -426,58 +546,159 @@ def create_trip(data):
 
     now = datetime.utcnow().isoformat()
 
-    cursor.execute("""
-        INSERT INTO trips (
+    # ------------------------------------------------------
+    # Support both names used by the application.
+    #
+    # Frontend/backend may send:
+    #
+    #     other
+    #
+    # or:
+    #
+    #     other_requirements
+    # ------------------------------------------------------
 
-            departure_location,
-            trip_scope,
-            country,
-            travelers,
-            duration_days,
-            travel_dates,
-            maximum_total_travel_time,
-            maximum_distance,
-            transportation_preference,
-            accommodation_preference,
-            safety_requirement,
-            budget,
-            other_requirements,
-            status,
-            created_at,
-            updated_at
+    other_requirements = data.get(
+        "other_requirements"
+    )
 
+    if other_requirements is None:
+
+        other_requirements = data.get(
+            "other",
+            []
         )
 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
+    # ------------------------------------------------------
+    # Convert lists/dictionaries into JSON.
+    # This fixes:
+    #
+    # "Error binding parameter ... type 'list' is not supported"
+    # ------------------------------------------------------
 
-        data.get("departure_location"),
-        data.get("trip_scope"),
-        data.get("country"),
-        data.get("travelers"),
-        data.get("duration_days"),
-        data.get("travel_dates"),
-        data.get("maximum_total_travel_time"),
-        data.get("maximum_distance"),
-        data.get("transportation_preference"),
-        data.get("accommodation_preference"),
-        data.get("safety_requirement"),
-        data.get("budget"),
-        data.get("other"),
-        "basic",
-        now,
-        now
+    other_requirements = serialize_json(
+        other_requirements
+    )
 
-    ))
+    user_preferences = serialize_json(
+        data.get(
+            "user_preferences"
+        )
+    )
 
+    try:
 
-    trip_id = cursor.lastrowid
+        cursor.execute("""
+            INSERT INTO trips (
 
-    connection.commit()
+                departure_location,
+                trip_scope,
+                country,
+                region,
+                travelers,
+                duration_days,
+                travel_dates,
+                maximum_total_travel_time,
+                maximum_distance,
+                transportation_preference,
+                accommodation_preference,
+                safety_requirement,
+                budget,
+                other_requirements,
+                user_preferences,
+                status,
+                created_at,
+                updated_at
 
-    connection.close()
+            )
 
-    return trip_id
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        """, (
+
+            data.get(
+                "departure_location"
+            ),
+
+            data.get(
+                "trip_scope"
+            ),
+
+            data.get(
+                "country"
+            ),
+
+            data.get(
+                "region"
+            ),
+
+            data.get(
+                "travelers"
+            ),
+
+            data.get(
+                "duration_days"
+            ),
+
+            data.get(
+                "travel_dates"
+            ),
+
+            data.get(
+                "maximum_total_travel_time"
+            ),
+
+            data.get(
+                "maximum_distance"
+            ),
+
+            data.get(
+                "transportation_preference"
+            ),
+
+            data.get(
+                "accommodation_preference"
+            ),
+
+            data.get(
+                "safety_requirement"
+            ),
+
+            data.get(
+                "budget"
+            ),
+
+            other_requirements,
+
+            user_preferences,
+
+            data.get(
+                "status",
+                "basic"
+            ),
+
+            now,
+
+            now
+        ))
+
+        trip_id = cursor.lastrowid
+
+        connection.commit()
+
+        return trip_id
+
+    except Exception:
+
+        connection.rollback()
+
+        raise
+
+    finally:
+
+        connection.close()
 
 
 # ==========================================================
@@ -485,6 +706,11 @@ def create_trip(data):
 # ==========================================================
 
 def get_trip(trip_id):
+    """
+    Retrieve a trip from SQLite.
+
+    JSON fields are converted back into Python objects.
+    """
 
     connection = get_connection()
 
@@ -494,7 +720,9 @@ def get_trip(trip_id):
         SELECT *
         FROM trips
         WHERE id = ?
-    """, (trip_id,))
+    """, (
+        trip_id,
+    ))
 
     row = cursor.fetchone()
 
@@ -503,14 +731,53 @@ def get_trip(trip_id):
     if row is None:
         return None
 
-    return dict(row)
+    trip = dict(row)
+
+    # ------------------------------------------------------
+    # Restore JSON fields.
+    # ------------------------------------------------------
+
+    trip["other_requirements"] = deserialize_json(
+        trip.get(
+            "other_requirements"
+        ),
+        []
+    )
+
+    trip["user_preferences"] = deserialize_json(
+        trip.get(
+            "user_preferences"
+        ),
+        {}
+    )
+
+    # Compatibility with the older application format.
+    trip["other"] = trip["other_requirements"]
+
+    return trip
 
 
 # ==========================================================
 # UPDATE TRIP
 # ==========================================================
 
-def update_trip(trip_id, data):
+def update_trip(
+    trip_id,
+    data
+):
+    """
+    Update an existing trip.
+
+    JSON/list values are serialized before storage.
+    """
+
+    if not isinstance(
+        data,
+        dict
+    ):
+        raise ValueError(
+            "Trip update data must be a dictionary."
+        )
 
     connection = get_connection()
 
@@ -521,6 +788,7 @@ def update_trip(trip_id, data):
         "departure_location",
         "trip_scope",
         "country",
+        "region",
         "travelers",
         "duration_days",
         "travel_dates",
@@ -536,31 +804,45 @@ def update_trip(trip_id, data):
 
     ]
 
-
     updates = []
 
     values = []
 
-
     for key in allowed:
 
-        if key in data:
+        if key not in data:
+            continue
 
-            updates.append(
-                f"{key} = ?"
+        value = data[key]
+
+        # --------------------------------------------------
+        # Convert JSON-compatible fields.
+        # --------------------------------------------------
+
+        if key in (
+            "other_requirements",
+            "user_preferences"
+        ):
+
+            value = serialize_json(
+                value
             )
 
-            values.append(
-                data[key]
-            )
+        updates.append(
+            f"{key} = ?"
+        )
 
+        values.append(
+            value
+        )
 
     if not updates:
 
         connection.close()
 
-        return get_trip(trip_id)
-
+        return get_trip(
+            trip_id
+        )
 
     updates.append(
         "updated_at = ?"
@@ -574,29 +856,72 @@ def update_trip(trip_id, data):
         trip_id
     )
 
+    try:
 
-    cursor.execute(
-        f"""
-        UPDATE trips
-        SET {", ".join(updates)}
-        WHERE id = ?
-        """,
-        values
+        cursor.execute(
+            f"""
+            UPDATE trips
+
+            SET {", ".join(updates)}
+
+            WHERE id = ?
+            """,
+            values
+        )
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+
+        raise
+
+    finally:
+
+        connection.close()
+
+    return get_trip(
+        trip_id
     )
-
-
-    connection.commit()
-
-    connection.close()
-
-    return get_trip(trip_id)
 
 
 # ==========================================================
 # RANDOM DESTINATIONS
 # ==========================================================
 
-def get_random_destinations(limit=6):
+def get_random_destinations(
+    limit=6
+):
+    """
+    Return random destinations from the database.
+
+    SQLite performs the randomization using:
+
+        ORDER BY RANDOM()
+    """
+
+    try:
+
+        limit = int(
+            limit
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        limit = 6
+
+    # Prevent unreasonable queries.
+    limit = max(
+        1,
+        min(
+            limit,
+            20
+        )
+    )
 
     connection = get_connection()
 
@@ -607,7 +932,9 @@ def get_random_destinations(limit=6):
         FROM destinations
         ORDER BY RANDOM()
         LIMIT ?
-    """, (limit,))
+    """, (
+        limit,
+    ))
 
     rows = cursor.fetchall()
 
@@ -623,22 +950,46 @@ def get_random_destinations(limit=6):
 # HOME DESTINATIONS
 # ==========================================================
 
-def get_home_destinations(limit=5):
+def get_home_destinations(
+    limit=5
+):
+    """
+    Get randomized destinations for the homepage.
+    """
 
-    return get_random_destinations(limit)
+    return get_random_destinations(
+        limit
+    )
 
 
 # ==========================================================
 # SEARCH DESTINATIONS
 # ==========================================================
 
-def search_destinations(query):
+def search_destinations(
+    query
+):
+    """
+    Search the local destination database.
+    """
+
+    if query is None:
+        query = ""
+
+    query = str(
+        query
+    ).strip()
+
+    if not query:
+        return []
 
     connection = get_connection()
 
     cursor = connection.cursor()
 
-    pattern = f"%{query}%"
+    pattern = (
+        f"%{query}%"
+    )
 
     cursor.execute("""
         SELECT *
@@ -674,7 +1025,12 @@ def search_destinations(query):
 # DESTINATION BY ID
 # ==========================================================
 
-def get_destination(destination_id):
+def get_destination(
+    destination_id
+):
+    """
+    Get a single destination by database ID.
+    """
 
     connection = get_connection()
 
@@ -684,7 +1040,9 @@ def get_destination(destination_id):
         SELECT *
         FROM destinations
         WHERE id = ?
-    """, (destination_id,))
+    """, (
+        destination_id,
+    ))
 
     row = cursor.fetchone()
 
@@ -694,3 +1052,248 @@ def get_destination(destination_id):
         return None
 
     return dict(row)
+
+
+# ==========================================================
+# ADD DESTINATION
+# ==========================================================
+
+def add_destination(
+    data
+):
+    """
+    Add a new destination to the database.
+
+    This will be useful later when Gemini discovers
+    a new destination and Pexels/MapTiler information
+    is retrieved for it.
+    """
+
+    if not isinstance(
+        data,
+        dict
+    ):
+        raise ValueError(
+            "Destination data must be a dictionary."
+        )
+
+    name = str(
+        data.get(
+            "name",
+            ""
+        )
+    ).strip()
+
+    if not name:
+        raise ValueError(
+            "Destination name is required."
+        )
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    try:
+
+        cursor.execute("""
+            INSERT INTO destinations (
+
+                name,
+                country,
+                region,
+                description,
+                image_url,
+                pexels_url,
+                photo_credit,
+                latitude,
+                longitude,
+                source,
+                created_at
+
+            )
+
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+
+            name,
+
+            data.get(
+                "country"
+            ),
+
+            data.get(
+                "region"
+            ),
+
+            data.get(
+                "description"
+            ),
+
+            data.get(
+                "image_url"
+            ),
+
+            data.get(
+                "pexels_url"
+            ),
+
+            data.get(
+                "photo_credit"
+            ),
+
+            data.get(
+                "latitude"
+            ),
+
+            data.get(
+                "longitude"
+            ),
+
+            data.get(
+                "source",
+                "ai"
+            ),
+
+            datetime.utcnow().isoformat()
+
+        ))
+
+        destination_id = cursor.lastrowid
+
+        connection.commit()
+
+        return destination_id
+
+    except Exception:
+
+        connection.rollback()
+
+        raise
+
+    finally:
+
+        connection.close()
+
+
+# ==========================================================
+# ADD EXPENSE
+# ==========================================================
+
+def add_expense(
+    trip_id,
+    category,
+    description,
+    amount,
+    status="estimated"
+):
+    """
+    Store a trip expense in SQLite.
+    """
+
+    try:
+
+        amount = float(
+            amount
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        raise ValueError(
+            "Expense amount must be a valid number."
+        )
+
+    if amount < 0:
+
+        raise ValueError(
+            "Expense amount cannot be negative."
+        )
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    try:
+
+        cursor.execute("""
+            INSERT INTO expenses (
+
+                trip_id,
+                category,
+                description,
+                amount,
+                status,
+                created_at
+
+            )
+
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+
+            trip_id,
+            str(category),
+            str(description),
+            amount,
+            str(status),
+            datetime.utcnow().isoformat()
+
+        ))
+
+        expense_id = cursor.lastrowid
+
+        connection.commit()
+
+        return expense_id
+
+    except Exception:
+
+        connection.rollback()
+
+        raise
+
+    finally:
+
+        connection.close()
+
+
+# ==========================================================
+# GET TRIP EXPENSES
+# ==========================================================
+
+def get_trip_expenses(
+    trip_id
+):
+    """
+    Retrieve all expenses associated with a trip.
+    """
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM expenses
+        WHERE trip_id = ?
+        ORDER BY id
+    """, (
+        trip_id,
+    ))
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ==========================================================
+# INITIALIZE DATABASE WHEN MODULE IS USED
+# ==========================================================
+
+initialize_database()

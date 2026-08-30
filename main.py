@@ -1,5 +1,6 @@
 import json
 import uuid
+import database
 
 from ai.mood_agent import MoodAgent
 from ai.travel_agent import TravelAgent
@@ -258,311 +259,99 @@ def validate_map_results(
 # START TRIP
 # ==============================================================
 
-def start_trip(
-    trip_data
-):
-    """
-    Start a completely new travel planning session.
+def start_trip(trip_data):
 
-    Workflow:
+    if not isinstance(
+        trip_data,
+        dict
+    ):
+        raise ValueError(
+            "Trip data must be a dictionary."
+        )
 
-        Frontend
-            ↓
-        app.py
-            ↓
-        start_trip()
-            ↓
-        MoodAgent
-            ↓
-        TravelAgent
-            ↓
-        MapService
-            ↓
-        ResearchAgent
-            ↓
-        TravelAgent
-            ↓
-        Trip Options
-    """
+    # ======================================================
+    # GET SAVED TRIP
+    # ======================================================
 
-    validate_trip_data(
-        trip_data
+    trip_id = trip_data.get(
+        "trip_id"
     )
 
-    initialize_systems()
+    if trip_id is None:
 
-    # ==========================================================
-    # 1. CREATE TRIP ID
-    # ==========================================================
+        raise ValueError(
+            "Missing required field: trip_id"
+        )
 
-    trip_id = str(
-        uuid.uuid4()
+    try:
+
+        trip_id = int(
+            trip_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        raise ValueError(
+            "trip_id must be a valid integer."
+        )
+
+    saved_trip = database.get_trip(
+        trip_id
     )
 
-    # ==========================================================
-    # 2. EXTRACT USER INFORMATION
-    # ==========================================================
+    if saved_trip is None:
 
-    user_preferences = trip_data.get(
-        "user_preferences"
+        raise ValueError(
+            f"Trip {trip_id} was not found in the database."
+        )
+
+    # ======================================================
+    # GET USER'S PLANNING REQUEST
+    # ======================================================
+
+    user_input = trip_data.get(
+        "user_input"
     )
 
     if not isinstance(
-        user_preferences,
+        user_input,
         str
     ):
 
-        raise TypeError(
-            "user_preferences must be a string."
+        raise ValueError(
+            "user_input must be a string."
         )
 
-    # ----------------------------------------------------------
-    # Copy the user's basic trip information.
-    # ----------------------------------------------------------
+    user_input = user_input.strip()
 
-    trip_information = {
-
-        "trip_scope":
-            trip_data.get("trip_scope"),
-
-        "country":
-            trip_data.get("country"),
-
-        "region":
-            trip_data.get("region"),
-
-        "travelers":
-            trip_data.get("travelers"),
-
-        "duration_days":
-            trip_data.get("duration_days"),
-
-        "departure_location":
-            trip_data.get("departure_location"),
-
-        "maximum_total_travel_time":
-            trip_data.get(
-                "maximum_total_travel_time",
-                "no preference"
-            ),
-
-        "maximum_distance":
-            trip_data.get(
-                "maximum_distance",
-                "no preference"
-            ),
-
-        "safety_requirement":
-            trip_data.get(
-                "safety_requirement"
-            ),
-
-        "transportation_preference":
-            trip_data.get(
-                "transportation_preference",
-                "no preference"
-            ),
-
-        "accommodation_preference":
-            trip_data.get(
-                "accommodation_preference",
-                "no preference"
-            ),
-
-        "travel_dates":
-            trip_data.get("travel_dates"),
-
-        "other":
-            trip_data.get(
-                "other",
-                []
-            )
-    }
-
-    # ==========================================================
-    # 3. CREATE BUDGET
-    # ==========================================================
-
-    total_budget = float(
-        trip_data.get(
-            "budget"
-        )
-    )
-
-    budget = Budget(
-        total_budget=total_budget,
-        currency="CAD"
-    )
-
-    # ==========================================================
-    # 4. MOOD ANALYSIS
-    # ==========================================================
-
-    mood_agent_input = {
-
-        "user_input":
-            user_preferences,
-
-        "trip_information":
-            trip_information
-    }
-
-    mood_preferences = mood_agent.interpret(
-        mood_agent_input
-    )
-
-    # ==========================================================
-    # 5. FIND CANDIDATE DESTINATIONS
-    # ==========================================================
-
-    budget_state = budget.get_status()
-
-    candidate_result = travel_agent.find_candidates(
-
-        user_input=
-            user_preferences,
-
-        preferences=
-            mood_preferences,
-
-        budget=
-            budget_state,
-
-        trip_information=
-            trip_information
-    )
-
-    candidates = extract_candidates(
-        candidate_result
-    )
-
-    if not candidates:
+    if not user_input:
 
         raise ValueError(
-            "TravelAgent did not return any destinations."
+            "Please describe what you want from your trip."
         )
 
-    # ==========================================================
-    # 6. MAP DESTINATIONS
-    # ==========================================================
+    # ======================================================
+    # COMBINE SAVED BASIC INFORMATION
+    # WITH PLANNING PREFERENCES
+    # ======================================================
 
-    try:
-
-        map_results = map_service.get_locations(
-            candidates
-        )
-
-    except Exception:
-
-        map_results = []
-
-    valid_map_results = validate_map_results(
-        map_results
+    planning_data = dict(
+        saved_trip
     )
 
-    # ==========================================================
-    # 7. RESEARCH DESTINATIONS
-    # ==========================================================
+    planning_data[
+        "user_input"
+    ] = user_input
 
-    try:
+    planning_data[
+        "user_preferences"
+    ] = user_input
 
-        research_result = research_agent.research(
-
-            destinations=
-                candidates,
-
-            preferences=
-                mood_preferences,
-
-            budget=
-                budget.get_status()
-        )
-
-    except Exception as error:
-
-        raise RuntimeError(
-            f"ResearchAgent failed: {error}"
-        )
-
-    # ==========================================================
-    # 8. FINAL TRAVEL AGENT PASS
-    # ==========================================================
-
-    final_response = travel_agent.ask(
-
-        user_input=
-            user_preferences,
-
-        preferences=
-            mood_preferences,
-
-        budget=
-            budget.get_status(),
-
-        research=
-            research_result,
-
-        map_data=
-            valid_map_results,
-
-        trip_information=
-            trip_information
-    )
-
-    # ==========================================================
-    # 9. SAVE TRIP STATE
-    # ==========================================================
-
-    TRIPS[trip_id] = {
-
-        "trip_id":
-            trip_id,
-
-        "status":
-            "awaiting_selection",
-
-        "original_user_input":
-            user_preferences,
-
-        "trip_information":
-            trip_information,
-
-        "preferences":
-            mood_preferences,
-
-        "budget":
-            budget,
-
-        "candidate_result":
-            candidate_result,
-
-        "candidates":
-            candidates,
-
-        "map_data":
-            valid_map_results,
-
-        "research":
-            research_result,
-
-        "travel_options":
-            final_response,
-
-        "selected_destination":
-            None,
-
-        "selected_trip":
-            None
-    }
-
-    # ==========================================================
-    # 10. RETURN FRONTEND-SAFE DATA
-    # ==========================================================
-
-    return get_trip_status({
-        "trip_id": trip_id
-    })
-
+    # Continue with your existing
+    # AI / mood / destination workflow here.
 
 # ==============================================================
 # GET TRIP STATUS
