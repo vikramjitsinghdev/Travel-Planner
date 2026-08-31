@@ -1,9 +1,14 @@
 import os
 import requests
 
-from database import (
-    get_connection
-)
+from dotenv import load_dotenv
+
+
+# ==========================================================
+# ENVIRONMENT
+# ==========================================================
+
+load_dotenv()
 
 
 PEXELS_API_KEY = os.getenv(
@@ -16,21 +21,76 @@ PEXELS_URL = (
 )
 
 
+# ==========================================================
+# SEARCH DESTINATION IMAGE
+# ==========================================================
+
 def get_destination_image(
     destination_name,
-    country
+    country=None
 ):
+    """
+    Search Pexels for an image.
+
+    This module does NOT communicate with database.py.
+
+    main.py is responsible for deciding whether the image
+    should be stored in SQLite.
+    """
 
     if not PEXELS_API_KEY:
 
-        return None, None, None
+        return {
 
+            "image_url":
+                None,
 
-    query = (
-        f"{destination_name} "
-        f"{country} travel"
+            "pexels_url":
+                None,
+
+            "photographer":
+                None
+        }
+
+    destination_name = str(
+        destination_name or ""
+    ).strip()
+
+    country = str(
+        country or ""
+    ).strip()
+
+    if not destination_name:
+
+        return {
+
+            "image_url":
+                None,
+
+            "pexels_url":
+                None,
+
+            "photographer":
+                None
+        }
+
+    query_parts = [
+        destination_name
+    ]
+
+    if country:
+
+        query_parts.append(
+            country
+        )
+
+    query_parts.append(
+        "travel"
     )
 
+    query = " ".join(
+        query_parts
+    )
 
     try:
 
@@ -44,20 +104,33 @@ def get_destination_image(
             },
 
             params={
-                "query": query,
-                "orientation": "landscape",
-                "per_page": 1
+
+                "query":
+                    query,
+
+                "orientation":
+                    "landscape",
+
+                "per_page":
+                    1
             },
 
             timeout=8
-
         )
-
 
         if response.status_code != 200:
 
-            return None, None, None
+            return {
 
+                "image_url":
+                    None,
+
+                "pexels_url":
+                    None,
+
+                "photographer":
+                    None
+            }
 
         data = response.json()
 
@@ -66,105 +139,59 @@ def get_destination_image(
             []
         )
 
-
         if not photos:
 
-            return None, None, None
+            return {
 
+                "image_url":
+                    None,
+
+                "pexels_url":
+                    None,
+
+                "photographer":
+                    None
+            }
 
         photo = photos[0]
 
-
         image_url = (
             photo
-            .get("src", {})
-            .get("large2x")
-        )
-
-
-        pexels_url = photo.get(
-            "url"
-        )
-
-
-        photographer = photo.get(
-            "photographer"
-        )
-
-
-        return (
-            image_url,
-            pexels_url,
-            photographer
-        )
-
-
-    except Exception:
-
-        return None, None, None
-
-
-def preload_missing_images():
-
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-
-    cursor.execute("""
-        SELECT
-            id,
-            name,
-            country
-
-        FROM destinations
-
-        WHERE image_url IS NULL
-           OR image_url = ''
-    """)
-
-
-    destinations = cursor.fetchall()
-
-    connection.close()
-
-
-    for destination in destinations:
-
-        image_url, pexels_url, photographer = (
-            get_destination_image(
-                destination["name"],
-                destination["country"]
+            .get(
+                "src",
+                {}
+            )
+            .get(
+                "large2x"
             )
         )
 
+        return {
 
-        if image_url:
-
-            connection = get_connection()
-
-            cursor = connection.cursor()
-
-
-            cursor.execute("""
-                UPDATE destinations
-
-                SET
-                    image_url = ?,
-                    pexels_url = ?,
-                    photo_credit = ?
-
-                WHERE id = ?
-            """, (
-
+            "image_url":
                 image_url,
-                pexels_url,
-                photographer,
-                destination["id"]
 
-            ))
+            "pexels_url":
+                photo.get(
+                    "url"
+                ),
 
+            "photographer":
+                photo.get(
+                    "photographer"
+                )
+        }
 
-            connection.commit()
+    except Exception:
 
-            connection.close()
+        return {
+
+            "image_url":
+                None,
+
+            "pexels_url":
+                None,
+
+            "photographer":
+                None
+        }
