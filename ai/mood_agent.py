@@ -148,7 +148,7 @@ class MoodAgent:
 
         trip_information_json = json.dumps(
             trip_information,
-            indent=4
+            separators=(",", ":")
         )
 
         # ======================================================
@@ -156,235 +156,51 @@ class MoodAgent:
         # ======================================================
 
         prompt = f"""
-You are the travel preference interpretation component
-of an AI travel planning system.
+Extract the user's travel preferences into JSON.
 
-Your job is to understand EVERYTHING the user has provided.
-
-You have two sources of information:
-
-1. BASIC TRIP INFORMATION
-2. NATURAL-LANGUAGE TRAVEL WISHES
-
-You must combine them into one structured representation
-of what the user wants.
-
-You are NOT responsible for recommending destinations.
-
-You are NOT responsible for searching for destinations.
-
-You are NOT responsible for prices.
-
-You are NOT responsible for hotels or flights.
-
-------------------------------------------------------------
-BASIC TRIP INFORMATION
-------------------------------------------------------------
-
+TRIP:
 {trip_information_json}
 
-------------------------------------------------------------
-USER'S NATURAL-LANGUAGE TRAVEL WISHES
-------------------------------------------------------------
-
+USER:
 {user_input}
 
-------------------------------------------------------------
-YOUR TASK
-------------------------------------------------------------
+Rules:
+- User wording is the source of truth.
+- Put desired traits in "wanted"; rejected traits in "avoid".
+- Preserve hard constraints.
+- Do not invent information.
+- "other" must be an array.
+- Return ONLY valid JSON.
 
-Extract:
+Canonical traits include nature, mountains, beaches, wildlife, hiking,
+relaxation, quiet, culture, history, food, nightlife, urban,
+photography, adventure, warm_weather, cold_weather, snow, remote,
+family, solo, romance, shopping, luxury, crowded.
 
-1. wanted
-
-Canonical moods/preferences the user wants.
-
-Examples:
-
-nature
-mountains
-beaches
-wildlife
-hiking
-relaxation
-quiet
-culture
-history
-food
-nightlife
-urban
-photography
-adventure
-warm_weather
-cold_weather
-snow
-remote
-family
-solo
-romance
-shopping
-luxury
-
-2. avoid
-
-Canonical moods/preferences the user explicitly wants
-to avoid.
-
-IMPORTANT:
-
-If the user says:
-
-"I don't want crowded cities"
-
-then:
-
-avoid:
-[
-    "urban",
-    "crowded"
-]
-
-Do NOT put "urban" or "crowded" in wanted.
-
-If the user says:
-
-"I don't want too much walking"
-
-do NOT interpret this as wanting "walking".
-
-Instead record it as a constraint or limitation.
-
-3. summary
-
-Give a short natural-language summary of the complete
-user request.
-
-4. raw_wanted
-
-Keep important phrases from the user's original request.
-
-5. raw_avoid
-
-Keep important phrases that describe things the user
-does not want.
-
-6. constraints
-
-Preserve the basic trip information.
-
-Do NOT invent missing information.
-
-------------------------------------------------------------
-IMPORTANT INTERPRETATION RULES
-------------------------------------------------------------
-
-The user's original words are the source of truth.
-
-Do not invent preferences.
-
-Do not convert every noun into a mood.
-
-For example:
-
-"I don't want a tiring trip"
-
-does NOT mean:
-
-wanted = ["rest"]
-
-Instead, understand it as a travel constraint.
-
-For example:
-
-"I don't want to walk much"
-
-does NOT mean:
-
-wanted = ["walking"]
-
-It means the user wants a trip requiring limited walking.
-
-Similarly:
-
-"I want nature but also an urban experience"
-
-means BOTH:
-
-wanted = ["nature", "urban"]
-
-Do not assume these preferences contradict each other.
-
-------------------------------------------------------------
-CONSTRAINT RULES
-------------------------------------------------------------
-
-The following information should be preserved exactly
-when available:
-
-trip_scope
-country
-region
-travelers
-duration_days
-departure_location
-maximum_total_travel_time
-maximum_distance
-safety_requirement
-transportation_preference
-accommodation_preference
-travel_dates
-other
-
-Do not guess values.
-
-If something is not provided, use null.
-
-"other" must always be an array.
-
-------------------------------------------------------------
-OUTPUT
-------------------------------------------------------------
-
-Return ONLY one JSON OBJECT.
-
-Never return a JSON array.
-
-Never return Markdown.
-
-Never return ```json.
-
-Never add explanations outside the JSON object.
-
-The response MUST follow this exact structure:
-
+Required structure:
 {{
-    "wanted": [],
-    "avoid": [],
-    "constraints": {{
-        "trip_scope": null,
-        "country": null,
-        "region": null,
-        "travelers": null,
-        "duration_days": null,
-        "departure_location": null,
-        "maximum_total_travel_time": null,
-        "maximum_distance": null,
-        "safety_requirement": null,
-        "transportation_preference": null,
-        "accommodation_preference": null,
-        "travel_dates": null,
-        "other": []
-    }},
-    "summary": "",
-    "raw_wanted": [],
-    "raw_avoid": []
+  "wanted": [],
+  "avoid": [],
+  "constraints": {{
+    "trip_scope": null,
+    "country": null,
+    "region": null,
+    "travelers": null,
+    "duration_days": null,
+    "departure_location": null,
+    "maximum_total_travel_time": null,
+    "maximum_distance": null,
+    "safety_requirement": null,
+    "transportation_preference": null,
+    "accommodation_preference": null,
+    "travel_dates": null,
+    "other": []
+  }},
+  "summary": "",
+  "raw_wanted": [],
+  "raw_avoid": []
 }}
-
-Remember:
-
-The entire response must be ONE JSON OBJECT.
 """
-
         # ======================================================
         # GROQ REQUEST
         # ======================================================
@@ -411,7 +227,9 @@ The entire response must be ONE JSON OBJECT.
 
             response_format={
                 "type": "json_object"
-            }
+            },
+
+            max_completion_tokens=700
         )
 
         # ======================================================

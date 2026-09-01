@@ -178,18 +178,22 @@ class TravelAgent:
         # ------------------------------------------------------
 
         preferences_json = json.dumps(
-            preferences,
-            indent=4
+            {
+                "wanted": preferences.get("wanted", []),
+                "avoid": preferences.get("avoid", []),
+                "constraints": preferences.get("constraints", {})
+            },
+            separators=(",", ":")
         )
 
         budget_json = json.dumps(
             budget,
-            indent=4
+            separators=(",", ":")
         )
 
         trip_information_json = json.dumps(
             trip_information,
-            indent=4
+            separators=(",", ":")
         )
 
         # ------------------------------------------------------
@@ -197,123 +201,35 @@ class TravelAgent:
         # ------------------------------------------------------
 
         prompt = f"""
-You are the destination-selection component of an
-AI travel planning system.
+You are the candidate-selection stage of an AI travel planner.
 
-Your ONLY task is to select a SMALL number of candidate
-destinations that should be researched.
-
-You are NOT creating the final trip.
-
-You are NOT creating an itinerary.
-
-You are NOT calculating exact travel costs.
-
-You are NOT pretending to perform live searches.
-
-Your output will be passed to separate mapping and
-research systems.
-
-------------------------------------------------------------
-ORIGINAL USER REQUEST
-------------------------------------------------------------
-
+USER REQUEST:
 {user_input}
 
-------------------------------------------------------------
-BASIC TRIP INFORMATION
-------------------------------------------------------------
-
+TRIP INFORMATION:
 {trip_information_json}
 
-------------------------------------------------------------
-TRAVEL PREFERENCE PROFILE
-------------------------------------------------------------
-
+PREFERENCES:
 {preferences_json}
 
-------------------------------------------------------------
-CURRENT BUDGET
-------------------------------------------------------------
-
+BUDGET:
 {budget_json}
 
-------------------------------------------------------------
-IMPORTANT
-------------------------------------------------------------
-
-The original user request is the ultimate source of truth.
-
-Use the structured preference profile as supporting
-information.
-
-Respect hard trip constraints.
-
-Pay attention to:
-
-- departure location
-- trip scope
-- country
-- travelers
-- duration
-- travel dates
-- maximum travel time
-- maximum distance
-- transportation
-- accommodation
-- safety
-- additional requirements
-- wanted preferences
-- avoided preferences
-- budget
-
-Do not recommend destinations that obviously violate
-hard constraints.
-
-Select between 3 and 5 candidates.
-
-Do not return more than 5.
-
-The candidates should be meaningfully different when
-appropriate.
-
-Do not invent current prices.
-
-Do not claim live hotel availability.
-
-Do not claim live flight availability.
-
-Do not create a final itinerary.
-
-------------------------------------------------------------
-OUTPUT
-------------------------------------------------------------
-
-Return ONLY valid JSON.
-
-Do not use Markdown.
-
-Do not use ```json.
-
-Use EXACTLY:
+Select exactly 3 strong destinations for later research.
+Respect hard constraints first, then wanted/avoided preferences.
+Do not create an itinerary or claim live availability.
+Return ONLY valid JSON:
 
 {{
-    "candidates": [
-        {{
-            "name": "Destination name",
-            "country": "Country",
-            "reason": "Why this destination should be researched."
-        }}
-    ]
+  "candidates": [
+    {{
+      "name": "Destination",
+      "country": "Country",
+      "reason": "Concise reason this should be researched."
+    }}
+  ]
 }}
-
-Every candidate must contain:
-
-    name
-    country
-    reason
 """
-
         # ------------------------------------------------------
         # Gemini
         # ------------------------------------------------------
@@ -432,7 +348,7 @@ Every candidate must contain:
             )
 
         return {
-            "candidates": cleaned[:5]
+            "candidates": cleaned[:3]
         }
 
     # ==========================================================
@@ -539,32 +455,32 @@ Every candidate must contain:
 
         user_json = json.dumps(
             user_input,
-            indent=4
+            separators=(",", ":")
         )
 
         preferences_json = json.dumps(
             preferences,
-            indent=4
+            separators=(",", ":")
         )
 
         budget_json = json.dumps(
             budget,
-            indent=4
+            separators=(",", ":")
         )
 
         research_json = json.dumps(
             research,
-            indent=4
+            separators=(",", ":")
         )
 
         map_json = json.dumps(
             map_data,
-            indent=4
+            separators=(",", ":")
         )
 
         trip_information_json = json.dumps(
             trip_information,
-            indent=4
+            separators=(",", ":")
         )
 
         # ------------------------------------------------------
@@ -572,136 +488,45 @@ Every candidate must contain:
         # ------------------------------------------------------
 
         prompt = f"""
-You are the main AI travel planning agent.
+You are the MAIN AI travel planner performing final quality control.
 
-You are performing the final comparison stage.
-
-The application has already:
-
-1. Collected basic trip information.
-2. Interpreted the user's preferences.
-3. Generated candidate destinations.
-4. Obtained geographic information.
-5. Obtained destination research.
-
-Your job is to compare the researched destinations
-and present the best travel options to the user.
-
-The user will later select one of these options.
-
-------------------------------------------------------------
-ORIGINAL USER REQUEST
-------------------------------------------------------------
-
+USER REQUEST:
 {user_json}
 
-------------------------------------------------------------
-BASIC TRIP INFORMATION
-------------------------------------------------------------
-
+TRIP INFORMATION:
 {trip_information_json}
 
-------------------------------------------------------------
-TRAVEL PREFERENCE PROFILE
-------------------------------------------------------------
-
+PREFERENCES:
 {preferences_json}
 
-------------------------------------------------------------
-CURRENT BUDGET
-------------------------------------------------------------
-
+BUDGET:
 {budget_json}
 
-------------------------------------------------------------
-MAP INFORMATION
-------------------------------------------------------------
-
+MAP DATA:
 {map_json}
 
-------------------------------------------------------------
-RESEARCH INFORMATION
-------------------------------------------------------------
-
+RESEARCH FROM SMALLER MODEL:
 {research_json}
 
-------------------------------------------------------------
-REASONING RULES
-------------------------------------------------------------
+Critically review the research; it is supporting evidence, not ground truth.
+Use the user's request and hard constraints as the source of truth.
+Compare candidates on preference fit, nature/urban character, relaxation,
+crowds, activities, accessibility, travel effort, transportation, geography,
+budget suitability, advantages and limitations.
 
-The original user request is the ultimate source
-of truth.
+Do not invent current prices, bookings, or availability.
+Do not create an itinerary or modify the budget.
+The user must still choose a destination.
 
-Use the MoodAgent profile as supporting information.
-
-Positive scores indicate desired characteristics.
-
-Negative scores indicate characteristics the user
-wants to avoid.
-
-Respect hard constraints.
-
-Consider:
-
-- destination suitability
-- natural environment
-- urban environment
-- crowds
-- relaxation
-- activities
-- travel effort
-- accessibility
-- transportation
-- geographic position
-- budget suitability
-
-Do not invent information that is missing.
-
-Do not invent current prices.
-
-Do not claim a hotel is currently available.
-
-Do not claim a flight is currently available.
-
-Do not claim that anything has been booked.
-
-Do not modify the budget.
-
-The budget system is responsible for actual
-financial state.
-
-------------------------------------------------------------
-OUTPUT
-------------------------------------------------------------
-
-Present the strongest travel options clearly.
-
-For each option explain:
-
-- destination
-- country
-- why it matches
-- important desired characteristics
-- possible conflicts with avoided preferences
-- travel effort
-- geographic information
-- budget considerations
-- advantages
-- limitations
-
-If there is a clear strongest option, identify it.
-
-However, do NOT commit to the trip.
-
-The user must choose.
-
-The final response is intended to help the user
-select one destination.
+Give concise recommendations and explain the strongest fits.
 """
-
         response = self.client.interactions.create(
             model=self.model,
-            input=prompt
+            input=prompt,
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 1400
+            }
         )
 
         content = getattr(

@@ -1,5 +1,6 @@
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 import database
 
 from ai.mood_agent import MoodAgent
@@ -787,15 +788,17 @@ def start_trip(trip_data):
            ↓
         TravelAgent
            ↓
-        search_destination.py
-           ↓
-        MapService
-           ↓
-        ResearchAgent
-           ↓
         TravelAgent
            ↓
-        Results
+        ┌───────────────┐
+        │               │
+        MapService   ResearchAgent
+        │               │
+        └───────┬───────┘
+                ↓
+        TravelAgent / Gemini
+                ↓
+             Results
     """
 
     initialize_systems()
@@ -934,23 +937,6 @@ def start_trip(trip_data):
     # DESTINATION SEARCH / RANKING
     # ==========================================================
 
-    destination_search_input = (
-        build_destination_search_input(
-
-            trip_information=
-                trip_information,
-
-            mood_preferences=
-                mood_preferences,
-
-            budget_value=
-                budget_value,
-
-            candidates=
-                candidate_objects
-        )
-    )
-
     destination_results = []
 
     for candidate in candidate_objects:
@@ -1021,24 +1007,113 @@ def start_trip(trip_data):
     ] = destination_results
 
     # ==========================================================
-    # MAPTILER
+    # MAPTILER + RESEARCH
+    # ==========================================================
+    #
+    # These operations are independent after TravelAgent has
+    # selected the candidates, so main.py runs them concurrently.
+    #
+    # main.py remains the only orchestrator. The agents/services
+    # do not communicate directly with one another.
     # ==========================================================
 
-    try:
+    def get_map_results():
 
-        map_results = (
-            map_service.get_locations(
-                candidates
+        try:
+
+            return (
+                map_service.get_locations(
+                    candidates
+                )
             )
+
+        except Exception as error:
+
+            return {
+                "__error__":
+                    str(error)
+            }
+
+    def get_research_results():
+
+        try:
+
+            # ResearchAgent is an information-gathering layer.
+            # Only the useful preference fields are passed to it.
+            research_preferences = {
+
+                "wanted":
+                    mood_preferences.get(
+                        "wanted",
+                        []
+                    ),
+
+                "avoid":
+                    mood_preferences.get(
+                        "avoid",
+                        []
+                    )
+            }
+
+            return (
+                research_agent.research(
+
+                    destinations=
+                        candidates,
+
+                    preferences=
+                        research_preferences,
+
+                    budget=
+                        budget_state
+                )
+            )
+
+        except Exception as error:
+
+            return {
+
+                "destinations":
+                    [],
+
+                "error":
+                    str(error)
+            }
+
+    with ThreadPoolExecutor(
+        max_workers=2
+    ) as executor:
+
+        map_future = executor.submit(
+            get_map_results
         )
 
-    except Exception as error:
+        research_future = executor.submit(
+            get_research_results
+        )
 
-        map_results = []
+        map_results = map_future.result()
+
+        research_result = (
+            research_future.result()
+        )
+
+    # ----------------------------------------------------------
+    # MAP RESULTS
+    # ----------------------------------------------------------
+
+    if isinstance(
+        map_results,
+        dict
+    ) and "__error__" in map_results:
 
         trip[
             "map_error"
-        ] = str(error)
+        ] = map_results[
+            "__error__"
+        ]
+
+        map_results = []
 
     valid_map_results = (
         validate_map_results(
@@ -1050,36 +1125,9 @@ def start_trip(trip_data):
         "map_data"
     ] = valid_map_results
 
-    # ==========================================================
-    # RESEARCH
-    # ==========================================================
-
-    try:
-
-        research_result = (
-            research_agent.research(
-
-                destinations=
-                    candidates,
-
-                preferences=
-                    mood_preferences,
-
-                budget=
-                    budget_state
-            )
-        )
-
-    except Exception as error:
-
-        research_result = {
-
-            "destinations":
-                [],
-
-            "error":
-                str(error)
-        }
+    # ----------------------------------------------------------
+    # RESEARCH RESULTS
+    # ----------------------------------------------------------
 
     trip[
         "research"
@@ -1347,23 +1395,6 @@ def update_trip(trip_data):
             "total_budget"
         )
 
-    destination_search_input = (
-        build_destination_search_input(
-
-            trip_information=
-                trip_information,
-
-            mood_preferences=
-                mood_preferences,
-
-            budget_value=
-                budget_value,
-
-            candidates=
-                candidate_objects
-        )
-    )
-
     destination_results = []
 
     for candidate in candidate_objects:
@@ -1412,42 +1443,80 @@ def update_trip(trip_data):
     )
 
     # ==========================================================
-    # MAP
+    # MAP + RESEARCH
+    # ==========================================================
+    #
+    # Both operations are independent after candidate selection.
+    # Run them concurrently while keeping main.py as the
+    # communication/orchestration layer.
     # ==========================================================
 
-    try:
+    def get_map_results():
 
-        map_results = (
-            map_service.get_locations(
-                candidates
+        try:
+
+            return (
+                map_service.get_locations(
+                    candidates
+                )
+            )
+
+        except Exception:
+
+            return []
+
+    def get_research_results():
+
+        research_preferences = {
+
+            "wanted":
+                mood_preferences.get(
+                    "wanted",
+                    []
+                ),
+
+            "avoid":
+                mood_preferences.get(
+                    "avoid",
+                    []
+                )
+        }
+
+        return (
+            research_agent.research(
+
+                destinations=
+                    candidates,
+
+                preferences=
+                    research_preferences,
+
+                budget=
+                    new_budget.get_status()
             )
         )
 
-    except Exception:
+    with ThreadPoolExecutor(
+        max_workers=2
+    ) as executor:
 
-        map_results = []
+        map_future = executor.submit(
+            get_map_results
+        )
+
+        research_future = executor.submit(
+            get_research_results
+        )
+
+        map_results = map_future.result()
+
+        research_result = (
+            research_future.result()
+        )
 
     valid_map_results = (
         validate_map_results(
             map_results
-        )
-    )
-
-    # ==========================================================
-    # RESEARCH
-    # ==========================================================
-
-    research_result = (
-        research_agent.research(
-
-            destinations=
-                candidates,
-
-            preferences=
-                mood_preferences,
-
-            budget=
-                new_budget.get_status()
         )
     )
 

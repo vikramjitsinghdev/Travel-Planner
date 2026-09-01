@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ollama import Client
 
@@ -109,69 +110,83 @@ class ResearchAgent:
         # Research each destination separately
         # ------------------------------------------------------
 
-        researched_destinations = []
+        research_preferences = {
+            "wanted": preferences.get("wanted", []),
+            "avoid": preferences.get("avoid", [])
+        }
 
-        for destination in destinations:
+        max_workers = min(3, len(destinations))
+        researched_destinations = [None] * len(destinations)
+
+        def research_one(index, destination):
 
             print(
                 f"\nResearching: {destination}"
             )
-
-            # --------------------------------------------------
-            # Find matching MapTiler information.
-            # --------------------------------------------------
 
             location_data = self._find_map_data(
                 destination,
                 map_data
             )
 
-            # --------------------------------------------------
-            # Research one destination.
-            # --------------------------------------------------
-
             result = self._research_one(
                 destination=destination,
-                preferences=preferences,
+                preferences=research_preferences,
                 budget=budget,
                 map_data=location_data
             )
 
-            # --------------------------------------------------
-            # Combine MapTiler data with Ollama research.
-            #
-            # MapTiler is authoritative for coordinates.
-            # --------------------------------------------------
-
             if location_data:
 
                 result["location"] = {
-                    "latitude": location_data.get(
-                        "coordinates",
-                        {}
-                    ).get(
-                        "latitude"
-                    ),
 
-                    "longitude": location_data.get(
-                        "coordinates",
-                        {}
-                    ).get(
-                        "longitude"
-                    ),
+                    "latitude":
+                        location_data.get(
+                            "coordinates", {}
+                        ).get(
+                            "latitude"
+                        ),
 
-                    "place_id": location_data.get(
-                        "place_id"
-                    )
+                    "longitude":
+                        location_data.get(
+                            "coordinates", {}
+                        ).get(
+                            "longitude"
+                        ),
+
+                    "place_id":
+                        location_data.get(
+                            "place_id"
+                        )
                 }
 
-            researched_destinations.append(
-                result
-            )
+            return index, result
 
-        # ------------------------------------------------------
-        # Return one combined research object.
-        # ------------------------------------------------------
+        with ThreadPoolExecutor(
+            max_workers=max_workers
+        ) as executor:
+
+            futures = [
+                executor.submit(
+                    research_one,
+                    index,
+                    destination
+                )
+                for index, destination
+                in enumerate(destinations)
+            ]
+
+            for future in as_completed(futures):
+
+                index, result = future.result()
+
+                researched_destinations[index] = result
+
+        researched_destinations = [
+            result
+            for result in researched_destinations
+            if result is not None
+        ]
 
         return {
             "destinations": researched_destinations
@@ -200,12 +215,12 @@ class ResearchAgent:
 
         preferences_json = json.dumps(
             preferences,
-            indent=2
+            separators=(",", ":")
         )
 
         budget_json = json.dumps(
             budget,
-            indent=2
+            separators=(",", ":")
         )
 
         # ------------------------------------------------------
@@ -213,117 +228,66 @@ class ResearchAgent:
         # ------------------------------------------------------
 
         prompt = f"""
-You are a travel research assistant.
-
-Research the following candidate destination:
+You are a compact travel research assistant.
 
 DESTINATION:
 {destination}
 
-USER TRAVEL PREFERENCES:
+PREFERENCES:
 {preferences_json}
 
-CURRENT TRAVEL BUDGET:
+BUDGET:
 {budget_json}
 
-Your job is to provide useful information that another
-AI travel planner can use to evaluate this destination.
+MAP DATA:
+{json.dumps(map_data, separators=(",", ":"))}
 
-Focus on:
+Provide concise supporting information for the MAIN travel planner.
+You are not the final decision maker.
 
-- general location
-- natural environment
-- beaches
-- ocean/coast
-- mountains
-- hiking
-- nightlife
-- urban environment
-- relaxation
-- crowd level
-- activities
-- accessibility
-- transportation
+Cover:
+- general character/location
+- nature, mountains, beaches/coast
+- hiking and activities
+- nightlife/urban environment
+- relaxation/crowds
+- accessibility/transportation
 - accommodation
 - budget considerations
-- travel fatigue
-- advantages
-- limitations
-- how well it matches the user's preferences
+- travel effort/fatigue
+- advantages and limitations
 
-IMPORTANT:
-
-You are NOT the final travel planner.
-
-Do NOT choose the final winner.
-
-Do NOT create an itinerary.
-
-Do NOT claim that you performed a live web search.
-
-Do NOT invent current hotel prices.
-
-Do NOT invent current flight prices.
-
-Do NOT invent availability.
-
-Do NOT claim that information is real-time.
-
-If something is unknown, write "unknown".
-
-Keep each description concise.
-
-Return ONLY valid JSON.
-
-Use EXACTLY this structure:
+Do not create an itinerary.
+Do not claim live prices, bookings, availability, or live web research.
+Do not invent missing facts. Use "unknown".
+Return ONLY valid JSON:
 
 {{
-    "name": "{destination}",
-    "country": "country name or unknown",
-    "overview": "short overview",
-
-    "characteristics": {{
-        "nature": "short description",
-        "mountains": "short description",
-        "beaches": "short description",
-        "ocean_coast": "short description",
-        "hiking": "short description",
-        "nightlife": "short description",
-        "urban": "short description",
-        "relaxation": "short description",
-        "crowds": "short description"
-    }},
-
-    "activities": [
-        "activity 1",
-        "activity 2",
-        "activity 3"
-    ],
-
-    "accessibility": "short description",
-
-    "transportation": "short description",
-
-    "accommodation": "short description",
-
-    "budget_notes": "short description",
-
-    "fatigue_notes": "short description",
-
-    "preference_match": "short description",
-
-    "advantages": [
-        "advantage 1",
-        "advantage 2"
-    ],
-
-    "limitations": [
-        "limitation 1",
-        "limitation 2"
-    ]
+  "name": "{destination}",
+  "country": "country or unknown",
+  "overview": "short",
+  "characteristics": {{
+    "nature": "short",
+    "mountains": "short",
+    "beaches": "short",
+    "ocean_coast": "short",
+    "hiking": "short",
+    "nightlife": "short",
+    "urban": "short",
+    "relaxation": "short",
+    "crowds": "short"
+  }},
+  "activities": [],
+  "accessibility": "short",
+  "transportation": "short",
+  "accommodation": "short",
+  "budget_notes": "short",
+  "fatigue_notes": "short",
+  "preference_match": "short",
+  "advantages": [],
+  "limitations": []
 }}
 """
-
         # ------------------------------------------------------
         # Ask Ollama.
         # ------------------------------------------------------
@@ -345,7 +309,11 @@ Use EXACTLY this structure:
                 }
             ],
 
-            format="json"
+            format="json",
+            options={
+                "temperature": 0.1,
+                "num_predict": 700
+            }
         )
 
         # ------------------------------------------------------
