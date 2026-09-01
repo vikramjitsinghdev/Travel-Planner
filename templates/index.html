@@ -2237,6 +2237,309 @@ h3 {
 }
 
 
+
+/* ==========================================================
+   TRIP CHAT SCENE
+========================================================== */
+
+.trip-chat-scene {
+    display: none;
+    width: min(100%, 820px);
+    height: min(72vh, 680px);
+    min-height: 500px;
+    margin: 0 auto;
+    position: relative;
+    flex-direction: column;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #eef0f2;
+    border-radius: 18px;
+    box-shadow:
+        0 8px 28px rgba(15, 23, 42, .08),
+        0 2px 8px rgba(15, 23, 42, .035);
+}
+
+.trip-chat-scene.open {
+    display: flex;
+}
+
+.trip-chat-status {
+    position: absolute;
+    top: 10px;
+    left: 13px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #20c875;
+    z-index: 3;
+}
+
+.trip-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 17px 20px 14px 25px;
+    border-bottom: 1px solid #f1f3f5;
+    background: rgba(255,255,255,.96);
+}
+
+.trip-chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.trip-chat-avatar {
+    width: 31px;
+    height: 31px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--navy);
+    color: white;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.trip-chat-title {
+    font-family: "Montserrat", sans-serif;
+    color: var(--navy);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.trip-chat-subtitle {
+    margin-top: 2px;
+    color: #94a3b8;
+    font-size: 9px;
+}
+
+.trip-chat-reset {
+    border: 0;
+    background: #f8fafc;
+    color: #64748b;
+    border-radius: 18px;
+    padding: 7px 11px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.trip-chat-reset:hover {
+    background: #eef2f7;
+    color: var(--navy);
+}
+
+.trip-chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 25px 25px 18px;
+    background: #fff;
+    scroll-behavior: smooth;
+}
+
+.trip-chat-empty {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #c0c5c9;
+    font-size: 11px;
+}
+
+.trip-chat-row {
+    display: flex;
+    width: 100%;
+    margin: 0 0 12px;
+}
+
+.trip-chat-row.user {
+    justify-content: flex-end;
+}
+
+.trip-chat-row.assistant {
+    justify-content: flex-start;
+}
+
+.trip-chat-bubble {
+    max-width: min(74%, 600px);
+    padding: 10px 13px;
+    border-radius: 15px;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.trip-chat-row.user .trip-chat-bubble {
+    background: var(--orange);
+    color: #fff;
+    border-bottom-right-radius: 5px;
+    box-shadow: 0 2px 7px rgba(198,91,0,.13);
+}
+
+.trip-chat-row.assistant .trip-chat-bubble {
+    background: #f4f5f6;
+    color: #334155;
+    border-bottom-left-radius: 5px;
+}
+
+.trip-chat-time {
+    margin-top: 4px;
+    padding: 0 3px;
+    color: #aeb4b9;
+    font-size: 8px;
+}
+
+.trip-chat-row.user .trip-chat-time {
+    text-align: right;
+}
+
+.trip-chat-composer-area {
+    padding: 9px 16px 14px;
+    background: #fff;
+    border-top: 1px solid #f5f5f5;
+}
+
+.trip-chat-composer {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    padding: 3px 4px 3px 10px;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+    border-radius: 22px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.025);
+}
+
+.trip-chat-icon-button {
+    width: 28px;
+    height: 32px;
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: #9ca3a8;
+    padding: 0;
+}
+
+.trip-chat-input {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    padding: 0 7px;
+    color: #334155;
+    font-size: 11px;
+}
+
+.trip-chat-input::placeholder {
+    color: #aeb2b5;
+}
+
+.trip-chat-send {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: var(--orange);
+    color: white;
+    margin-left: 3px;
+    padding: 0;
+    transition: transform .12s ease, background .12s ease;
+}
+
+.trip-chat-send:hover {
+    background: var(--orange-hover);
+}
+
+.trip-chat-send:active {
+    transform: scale(.93);
+}
+
+.trip-chat-arrow {
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 7px solid #fff;
+    margin-left: 2px;
+}
+
+.trip-chat-typing {
+    display: none;
+    align-items: center;
+    gap: 3px;
+    width: fit-content;
+    padding: 9px 12px;
+    margin: 0 0 12px;
+    background: #f4f5f6;
+    border-radius: 14px;
+    border-bottom-left-radius: 5px;
+}
+
+.trip-chat-typing.show {
+    display: flex;
+}
+
+.trip-chat-typing span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #9ca3a8;
+    animation: tripChatTyping 1s infinite ease-in-out;
+}
+
+.trip-chat-typing span:nth-child(2) {
+    animation-delay: .12s;
+}
+
+.trip-chat-typing span:nth-child(3) {
+    animation-delay: .24s;
+}
+
+@keyframes tripChatTyping {
+    0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+    30% { transform: translateY(-3px); opacity: 1; }
+}
+
+@media (max-width: 650px) {
+    .trip-chat-scene {
+        width: 100%;
+        height: calc(100vh - 150px);
+        min-height: 440px;
+        border-radius: 15px;
+    }
+
+    .trip-chat-messages {
+        padding: 18px 13px 12px;
+    }
+
+    .trip-chat-header {
+        padding-left: 20px;
+    }
+
+    .trip-chat-bubble {
+        max-width: 86%;
+    }
+
+    .trip-chat-composer-area {
+        padding-left: 9px;
+        padding-right: 9px;
+    }
+}
+
+
 /* ==========================================================
    RESPONSIVE
 ========================================================== */
@@ -3508,6 +3811,118 @@ FIND TRIPS →
 </div>
 
 
+<!-- ==================================================
+     TRIP CHAT — appears after FIND TRIPS
+=================================================== -->
+
+<div
+    class="trip-chat-scene"
+    id="tripChatScene"
+>
+
+    <div class="trip-chat-status"></div>
+
+    <div class="trip-chat-header">
+
+        <div class="trip-chat-header-left">
+
+            <div class="trip-chat-avatar">
+                W
+            </div>
+
+            <div>
+                <div class="trip-chat-title">
+                    Wanderlust AI
+                </div>
+
+                <div class="trip-chat-subtitle">
+                    Your travel planning assistant
+                </div>
+            </div>
+
+        </div>
+
+        <button
+            class="trip-chat-reset"
+            id="tripChatBackButton"
+            type="button"
+        >
+            EDIT REQUEST
+        </button>
+
+    </div>
+
+
+    <div
+        class="trip-chat-messages"
+        id="tripChatMessages"
+        aria-live="polite"
+    ></div>
+
+
+    <div
+        class="trip-chat-typing"
+        id="tripChatTyping"
+        aria-hidden="true"
+    >
+        <span></span>
+        <span></span>
+        <span></span>
+    </div>
+
+
+    <div class="trip-chat-composer-area">
+
+        <form
+            class="trip-chat-composer"
+            id="tripChatForm"
+        >
+
+            <button
+                class="trip-chat-icon-button"
+                id="tripChatAttachButton"
+                type="button"
+                aria-label="Attach file"
+                title="Attach file"
+            >
+                📎
+            </button>
+
+            <input
+                class="trip-chat-input"
+                id="tripChatInput"
+                type="text"
+                autocomplete="off"
+                placeholder="Type a message..."
+                aria-label="Chat message"
+            >
+
+            <button
+                class="trip-chat-icon-button"
+                id="tripChatEmojiButton"
+                type="button"
+                aria-label="Emoji"
+                title="Emoji"
+            >
+                ☺
+            </button>
+
+            <button
+                class="trip-chat-send"
+                type="submit"
+                aria-label="Send message"
+                title="Send message"
+            >
+                <span class="trip-chat-arrow"></span>
+            </button>
+
+        </form>
+
+    </div>
+
+</div>
+
+
 <div
     id="resultsSection"
     style="display:none;margin-top:30px;"
@@ -4158,6 +4573,224 @@ to the travel AI.
 
 </div>
 
+
+
+<script>
+/*
+ * ==========================================================
+ * TRIP CHAT CONTROLLER
+ *
+ * FIND TRIPS -> opens the chat scene and turns the original
+ * textarea request into the first user bubble.
+ *
+ * The custom event "wanderlust:chat-message" is emitted for
+ * the existing backend/controller to consume if desired.
+ * ==========================================================
+ */
+
+(function () {
+    const tripForm = document.getElementById("tripForm");
+    const preferencePanel = document.getElementById("preferencePanel");
+    const chatScene = document.getElementById("tripChatScene");
+    const chatMessages = document.getElementById("tripChatMessages");
+    const chatForm = document.getElementById("tripChatForm");
+    const chatInput = document.getElementById("tripChatInput");
+    const chatTyping = document.getElementById("tripChatTyping");
+    const backButton = document.getElementById("tripChatBackButton");
+    const userPreferences = document.getElementById("user_preferences");
+
+    if (!tripForm || !preferencePanel || !chatScene) return;
+
+    let chatStarted = false;
+
+    function escapeText(value) {
+        return String(value ?? "").trim();
+    }
+
+    function timeLabel() {
+        return new Intl.DateTimeFormat([], {
+            hour: "numeric",
+            minute: "2-digit"
+        }).format(new Date());
+    }
+
+    function scrollChat() {
+        requestAnimationFrame(() => {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+    }
+
+    function addMessage(text, sender) {
+        const clean = escapeText(text);
+        if (!clean) return null;
+
+        const row = document.createElement("div");
+        row.className = "trip-chat-row " + sender;
+
+        const content = document.createElement("div");
+
+        const bubble = document.createElement("div");
+        bubble.className = "trip-chat-bubble";
+        bubble.textContent = clean;
+
+        const time = document.createElement("div");
+        time.className = "trip-chat-time";
+        time.textContent = timeLabel();
+
+        content.appendChild(bubble);
+        content.appendChild(time);
+        row.appendChild(content);
+        chatMessages.appendChild(row);
+
+        scrollChat();
+        return row;
+    }
+
+    function setTyping(show) {
+        chatTyping.classList.toggle("show", Boolean(show));
+        chatTyping.setAttribute("aria-hidden", show ? "false" : "true");
+
+        if (show) {
+            scrollChat();
+        }
+    }
+
+    function emitChatMessage(text) {
+        document.dispatchEvent(new CustomEvent("wanderlust:chat-message", {
+            detail: {
+                message: text,
+                preferences: userPreferences ? userPreferences.value : "",
+                timestamp: new Date().toISOString()
+            }
+        }));
+    }
+
+    /*
+     * Called immediately when FIND TRIPS is pressed.
+     * A click is used rather than replacing the existing submit
+     * handler, so the site's existing backend pipeline can still
+     * receive the form submission.
+     */
+    function openTripChat() {
+        const initialMessage = escapeText(
+            userPreferences ? userPreferences.value : ""
+        );
+
+        if (!initialMessage) return;
+
+        chatStarted = true;
+
+        preferencePanel.style.display = "none";
+
+        const results = document.getElementById("resultsSection");
+        if (results) {
+            results.style.display = "none";
+        }
+
+        chatScene.classList.add("open");
+
+        chatMessages.innerHTML = "";
+
+        addMessage(initialMessage, "user");
+
+        /*
+         * This is the first AI-side message shown while the existing
+         * backend starts processing. A backend response can replace
+         * this later by calling window.wanderlustAddAssistantMessage().
+         */
+        setTyping(true);
+
+        setTimeout(() => {
+            if (!chatStarted) return;
+
+            setTyping(false);
+
+            addMessage(
+                "Got it. I’ll use that as the experience you want. " +
+                "Now I’ll work through your trip details and look for " +
+                "destinations that match.",
+                "assistant"
+            );
+
+            emitChatMessage(initialMessage);
+        }, 450);
+
+        scrollChat();
+    }
+
+    /*
+     * Make the transition happen at the same time as the button press.
+     * The normal form submission is intentionally NOT cancelled here.
+     */
+    const findTripsButton = document.getElementById("startTripButton");
+
+    if (findTripsButton) {
+        findTripsButton.addEventListener("click", function () {
+            openTripChat();
+        });
+    }
+
+    /*
+     * If another script submits the form programmatically, the capture
+     * listener still opens the chat scene.
+     */
+    tripForm.addEventListener("submit", function () {
+        if (!chatStarted) {
+            openTripChat();
+        }
+    }, true);
+
+    chatForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+
+        const text = escapeText(chatInput.value);
+        if (!text) return;
+
+        addMessage(text, "user");
+        chatInput.value = "";
+
+        setTyping(true);
+        emitChatMessage(text);
+
+        /*
+         * Until the backend supplies a response, keep the UI feeling
+         * alive. If your script.js handles the custom event and calls
+         * wanderlustAddAssistantMessage(), this placeholder is skipped.
+         */
+        window.dispatchEvent(new CustomEvent("wanderlust:user-message", {
+            detail: { message: text }
+        }));
+    });
+
+    backButton.addEventListener("click", function () {
+        chatStarted = false;
+        chatScene.classList.remove("open");
+        preferencePanel.style.display = "";
+
+        if (userPreferences) {
+            userPreferences.focus();
+        }
+    });
+
+    /*
+     * Public hooks for the existing/backend JS.
+     *
+     * Example:
+     *   window.wanderlustSetTyping(true)
+     *   window.wanderlustAddAssistantMessage("Here are 3 options...")
+     */
+    window.wanderlustAddAssistantMessage = function (text) {
+        setTyping(false);
+        return addMessage(text, "assistant");
+    };
+
+    window.wanderlustSetTyping = function (show) {
+        setTyping(show);
+    };
+
+    window.wanderlustOpenTripChat = openTripChat;
+})();
+</script>
 
 <!-- Wanderlust frontend controller -->
 <script
