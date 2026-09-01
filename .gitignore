@@ -20,6 +20,9 @@ Thumbs.db
 # Test cases
 test_budget.py
 test_maps.py
+test_agent.py
+test_workers.py
+
 
 # Database
 wanderlust.db

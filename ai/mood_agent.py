@@ -10,43 +10,38 @@ from mood.mood_score import MoodScore
 
 class MoodAgent:
     """
-    Travel preference interpretation agent.
+    STEP 2 — TRAVEL REQUIREMENTS EXTRACTION
 
-    This agent receives BOTH:
+    Receives:
 
-        1. Basic trip information
-        2. Natural-language travel preferences
+        User natural-language request
+        +
+        Basic trip information
 
-    It converts them into one structured user profile.
+    Produces:
+
+        TripRequirements JSON
+
+    MoodAgent does NOT:
+
+        - generate destinations
+        - search the web
+        - research destinations
+        - evaluate destinations
+        - rank destinations
+        - build final trips
+        - search maps
+        - calculate trip costs
 
     Architecture:
 
-        main.py
-            |
-            +---- basic trip information
-            |
-            +---- user wishes
-            |
-            v
+        USER
+          |
+          v
         MoodAgent
-            |
-           Groq
-            |
-            v
-        Structured User Profile
-            |
-            +---- moods
-            +---- scores
-            +---- constraints
-            +---- raw information
-            +---- summary
-
-    MoodAgent does NOT:
-        - recommend destinations
-        - search the web
-        - search maps
-        - search hotels
-        - calculate actual trip costs
+          |
+          v
+        TripRequirements
     """
 
     def __init__(self):
@@ -69,12 +64,7 @@ class MoodAgent:
 
         self.model = "openai/gpt-oss-20b"
 
-        # ------------------------------------------------------
-        # Helper classes.
-        # ------------------------------------------------------
-
         self.keyword_helper = MoodKeywords()
-
         self.score_helper = MoodScore()
 
     # ==========================================================
@@ -87,25 +77,14 @@ class MoodAgent:
         trip_information=None
     ):
         """
-        Interpret the user's travel request together with
-        the basic trip information.
+        Convert the user's natural-language request into
+        structured TripRequirements.
 
-        Parameters:
-
-            user_input:
-                Natural-language description of what the
-                user wants from the trip.
-
-            trip_information:
-                Basic trip constraints collected by main.py.
-
-        Returns:
-
-            Structured user profile.
+        This is the ONLY responsibility of MoodAgent.
         """
 
         # ------------------------------------------------------
-        # Validate user input.
+        # VALIDATE USER INPUT
         # ------------------------------------------------------
 
         if not isinstance(
@@ -126,7 +105,7 @@ class MoodAgent:
             )
 
         # ------------------------------------------------------
-        # Default trip information.
+        # DEFAULT TRIP INFORMATION
         # ------------------------------------------------------
 
         if trip_information is None:
@@ -142,65 +121,141 @@ class MoodAgent:
                 "trip_information must be a dictionary."
             )
 
-        # ------------------------------------------------------
-        # Convert basic information to JSON.
-        # ------------------------------------------------------
-
         trip_information_json = json.dumps(
             trip_information,
-            separators=(",", ":")
+            separators=(",", ":"),
+            default=str
         )
 
         # ======================================================
-        # GROQ PROMPT
+        # EXTRACTION PROMPT
         # ======================================================
 
         prompt = f"""
-Extract the user's travel preferences into JSON.
+You are the Travel Requirements Extraction Agent.
 
-TRIP:
+Your ONLY job is to understand what the user wants from
+their trip and convert it into a structured TripRequirements
+JSON object.
+
+You MUST NOT recommend destinations.
+
+You MUST NOT search for destinations.
+
+You MUST NOT rank destinations.
+
+You MUST NOT invent missing information.
+
+The user's wording is the source of truth.
+
+============================================================
+BASIC TRIP INFORMATION
+============================================================
+
 {trip_information_json}
 
-USER:
+============================================================
+USER REQUEST
+============================================================
+
 {user_input}
 
-Rules:
-- User wording is the source of truth.
-- Put desired traits in "wanted"; rejected traits in "avoid".
-- Preserve hard constraints.
-- Do not invent information.
-- "other" must be an array.
-- Return ONLY valid JSON.
+============================================================
+EXTRACTION RULES
+============================================================
 
-Canonical traits include nature, mountains, beaches, wildlife, hiking,
-relaxation, quiet, culture, history, food, nightlife, urban,
-photography, adventure, warm_weather, cold_weather, snow, remote,
-family, solo, romance, shopping, luxury, crowded.
+1. Extract explicit requirements.
 
-Required structure:
+2. Extract clear preferences.
+
+3. Put desired experiences in "wanted".
+
+4. Put explicitly rejected experiences in "avoid".
+
+5. Preserve hard constraints.
+
+6. Do not turn weak or uncertain language into a hard
+   constraint.
+
+7. Do not invent budget, dates, countries, activities,
+   weather preferences, transportation preferences, or
+   accommodation preferences.
+
+8. Basic trip information supplied by the application is
+   authoritative.
+
+9. If a value is unknown, use null.
+
+10. "other" MUST always be an array.
+
+11. Keep raw user wording in raw_wanted/raw_avoid when useful.
+
+12. Return ONLY valid JSON.
+
+============================================================
+CANONICAL PREFERENCE TRAITS
+============================================================
+
+nature
+mountains
+beaches
+wildlife
+hiking
+relaxation
+quiet
+culture
+history
+food
+nightlife
+urban
+photography
+adventure
+warm_weather
+cold_weather
+snow
+remote
+family
+solo
+romance
+shopping
+luxury
+crowded
+budget_friendly
+
+============================================================
+REQUIRED JSON
+============================================================
+
 {{
-  "wanted": [],
-  "avoid": [],
-  "constraints": {{
-    "trip_scope": null,
-    "country": null,
-    "region": null,
-    "travelers": null,
-    "duration_days": null,
-    "departure_location": null,
-    "maximum_total_travel_time": null,
-    "maximum_distance": null,
-    "safety_requirement": null,
-    "transportation_preference": null,
-    "accommodation_preference": null,
-    "travel_dates": null,
-    "other": []
-  }},
-  "summary": "",
-  "raw_wanted": [],
-  "raw_avoid": []
+    "wanted": [],
+    "avoid": [],
+
+    "constraints": {{
+        "trip_scope": null,
+        "country": null,
+        "region": null,
+        "travelers": null,
+        "duration_days": null,
+        "departure_location": null,
+        "budget": null,
+        "currency": null,
+        "maximum_total_travel_time": null,
+        "maximum_distance": null,
+        "safety_requirement": null,
+        "transportation_preference": null,
+        "accommodation_preference": null,
+        "travel_dates": null,
+        "other": []
+    }},
+
+    "summary": "",
+
+    "raw_wanted": [],
+
+    "raw_avoid": []
 }}
 """
+
         # ======================================================
         # GROQ REQUEST
         # ======================================================
@@ -213,8 +268,8 @@ Required structure:
                 {
                     "role": "system",
                     "content": (
-                        "You are a travel preference "
-                        "extraction system. "
+                        "You are a strict travel "
+                        "requirements extraction system. "
                         "Return exactly one valid JSON object "
                         "and nothing else."
                     )
@@ -229,11 +284,11 @@ Required structure:
                 "type": "json_object"
             },
 
-            max_completion_tokens=700
+            max_completion_tokens=900
         )
 
         # ======================================================
-        # EXTRACT RESPONSE
+        # READ RESPONSE
         # ======================================================
 
         content = (
@@ -281,7 +336,7 @@ Required structure:
             )
 
         # ======================================================
-        # NORMALIZE FIELDS
+        # EXTRACT FIELDS
         # ======================================================
 
         wanted = result.get(
@@ -313,6 +368,10 @@ Required structure:
             "raw_avoid",
             []
         )
+
+        # ======================================================
+        # TYPE NORMALIZATION
+        # ======================================================
 
         if not isinstance(
             wanted,
@@ -350,24 +409,22 @@ Required structure:
             raw_avoid = []
 
         # ======================================================
-        # NORMALIZE MOOD NAMES
+        # NORMALIZE PREFERENCES
         # ======================================================
 
         wanted = [
-            str(mood).strip().lower()
-            for mood in wanted
-            if str(mood).strip()
+            str(value).strip().lower()
+            for value in wanted
+            if str(value).strip()
         ]
 
         avoid = [
-            str(mood).strip().lower()
-            for mood in avoid
-            if str(mood).strip()
+            str(value).strip().lower()
+            for value in avoid
+            if str(value).strip()
         ]
 
-        # ------------------------------------------------------
         # Remove duplicates.
-        # ------------------------------------------------------
 
         wanted = list(
             dict.fromkeys(
@@ -381,22 +438,16 @@ Required structure:
             )
         )
 
-        # ------------------------------------------------------
-        # Prevent the same mood from being both wanted
-        # and avoided.
-        #
-        # If there is ambiguity, avoid takes priority because
-        # it represents an explicit rejection.
-        # ------------------------------------------------------
+        # Explicitly avoided traits take priority.
 
         wanted = [
-            mood
-            for mood in wanted
-            if mood not in avoid
+            value
+            for value in wanted
+            if value not in avoid
         ]
 
         # ======================================================
-        # MERGE BASIC TRIP INFORMATION
+        # NORMALIZE CONSTRAINTS
         # ======================================================
 
         constraint_keys = [
@@ -407,6 +458,8 @@ Required structure:
             "travelers",
             "duration_days",
             "departure_location",
+            "budget",
+            "currency",
             "maximum_total_travel_time",
             "maximum_distance",
             "safety_requirement",
@@ -420,49 +473,50 @@ Required structure:
 
         for key in constraint_keys:
 
-            if key in constraints:
-
-                normalized_constraints[key] = (
-                    constraints[key]
-                )
-
-            elif key in trip_information:
-
-                normalized_constraints[key] = (
-                    trip_information[key]
-                )
-
-            else:
-
-                normalized_constraints[key] = (
-                    [] if key == "other"
-                    else None
-                )
-
-        # ------------------------------------------------------
-        # main.py's collected information has priority.
-        #
-        # This prevents the LLM from accidentally changing
-        # hard user-provided constraints.
-        # ------------------------------------------------------
-
-        for key in constraint_keys:
-
             if key in trip_information:
 
                 normalized_constraints[key] = (
                     trip_information[key]
                 )
 
+            elif key in constraints:
+
+                normalized_constraints[key] = (
+                    constraints[key]
+                )
+
+            else:
+
+                normalized_constraints[key] = (
+                    []
+                    if key == "other"
+                    else None
+                )
+
+        # ------------------------------------------------------
+        # Ensure other is always an array.
+        # ------------------------------------------------------
+
+        if not isinstance(
+            normalized_constraints["other"],
+            list
+        ):
+
+            normalized_constraints["other"] = [
+                normalized_constraints["other"]
+            ]
+
         # ======================================================
-        # MOOD SCORE CALCULATION
+        # CALCULATE MOOD SCORES
         # ======================================================
 
-        score_profile = self.score_helper.analyze_profile(
-            {
-                "wanted": wanted,
-                "avoid": avoid
-            }
+        score_profile = (
+            self.score_helper.analyze_profile(
+                {
+                    "wanted": wanted,
+                    "avoid": avoid
+                }
+            )
         )
 
         scores = score_profile.get(
@@ -471,24 +525,30 @@ Required structure:
         )
 
         # ======================================================
-        # FINAL USER PROFILE
+        # FINAL TRIP REQUIREMENTS
         # ======================================================
 
-        final_profile = {
+        trip_requirements = {
 
-            "wanted": wanted,
+            "wanted":
+                wanted,
 
-            "avoid": avoid,
+            "avoid":
+                avoid,
 
-            "scores": scores,
+            "scores":
+                scores,
 
-            "score_details": score_profile,
+            "score_details":
+                score_profile,
 
-            "constraints": normalized_constraints,
+            "constraints":
+                normalized_constraints,
 
-            "summary": str(
-                summary
-            ).strip(),
+            "summary":
+                str(
+                    summary
+                ).strip(),
 
             "raw_wanted": [
                 str(value).strip()
@@ -503,4 +563,4 @@ Required structure:
             ]
         }
 
-        return final_profile
+        return trip_requirements
