@@ -1,73 +1,55 @@
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from google import genai
 
+from ai.research_agent import ResearchAgent
+from pexels_service import get_destination_image
+
+
+load_dotenv()
+
 
 class TravelAgent:
     """
-    MAIN GEMINI TRAVEL REASONING AGENT
+    WANDERLUST MAIN TRAVEL ORCHESTRATOR
 
-    This class is responsible ONLY for the Main Gemini stages.
+    Flow
+    ----
 
-    Architecture:
-
-        User
-          |
-          v
+        User Input
+             ↓
         MoodAgent
-          |
-          v
+             ↓
         TripRequirements
-          |
-          v
-        TravelAgent
-          |
-          +---- Generate 5 candidates
-          |
-          +---- Create research plan
-          |
-          v
-        main.py
-          |
-          v
+             ↓
+        TravelAgent / Gemini
+             ↓
+        EXACTLY 3 DESTINATIONS
+             ↓
         ResearchAgent
-          |
-          +---- Ollama Worker 1
-          |       Destination / Experience
-          |
-          +---- Ollama Worker 2
-          |       Transportation / Logistics / Weather
-          |
-          +---- Ollama Worker 3
-                  Costs / Budget
-          |
-          v
-        Research Results
-          |
-          v
-        TravelAgent
-          |
-          +---- Evaluate candidates
-          |
-          +---- Select best 3
-          |
-          v
+          ├── Worker 1 → Destination 1
+          ├── Worker 2 → Destination 2
+          └── Worker 3 → Destination 3
+             ↓
+        Gemma verification
+             ↓
+        Pexels images
+             ↓
+        Combined results
+             ↓
+        main.py / Flask
+             ↓
         Frontend
 
-    IMPORTANT:
-
     TravelAgent does NOT:
-        - perform web research
-        - call Ollama
-        - call WorkerAgent1
-        - call WorkerAgent2
-        - call WorkerAgent3
-        - perform parallel research
-
-    main.py is responsible for connecting TravelAgent
-    with ResearchAgent.
+        - directly call workers
+        - research destinations
+        - rank five destinations
+        - perform a second destination-selection stage
+        - create an itinerary during recommendations
     """
 
     # ==========================================================
@@ -78,11 +60,13 @@ class TravelAgent:
 
         load_dotenv()
 
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv(
+            "GEMINI_API_KEY"
+        )
 
         if not api_key:
             raise ValueError(
-                "GEMINI_API_KEY is not set in the .env file."
+                "GEMINI_API_KEY is not set."
             )
 
         self.client = genai.Client(
@@ -94,9 +78,16 @@ class TravelAgent:
             "gemini-3.6-flash"
         )
 
+        self.research_agent = ResearchAgent()
+
+        self.pexels_enabled = bool(
+            os.getenv(
+                "PEXELS_API_KEY"
+            )
+        )
+
     # ==========================================================
-    # STEP 1
-    # GENERATE CANDIDATES
+    # GEMINI: FIND EXACTLY 3
     # ==========================================================
 
     def find_candidates(
@@ -104,26 +95,35 @@ class TravelAgent:
         user_input,
         preferences,
         budget,
-        trip_information=None
+        trip_information=None,
     ):
         """
-        Ask Main Gemini to generate exactly five candidate
-        destinations.
+        Gemini selects exactly three destinations.
 
-        No research is performed here.
+        Gemini does NOT research them.
         """
 
-        if not isinstance(user_input, str) or not user_input.strip():
+        if not isinstance(
+            user_input,
+            str
+        ) or not user_input.strip():
+
             raise ValueError(
                 "user_input must be a non-empty string."
             )
 
-        if not isinstance(preferences, dict):
+        if not isinstance(
+            preferences,
+            dict
+        ):
             raise TypeError(
                 "preferences must be a dictionary."
             )
 
-        if not isinstance(budget, dict):
+        if not isinstance(
+            budget,
+            dict
+        ):
             raise TypeError(
                 "budget must be a dictionary."
             )
@@ -131,104 +131,56 @@ class TravelAgent:
         if trip_information is None:
             trip_information = {}
 
-        if not isinstance(trip_information, dict):
+        if not isinstance(
+            trip_information,
+            dict
+        ):
             raise TypeError(
                 "trip_information must be a dictionary."
             )
 
         prompt = f"""
-You are the MAIN AI ORCHESTRATOR of a travel planning
-system.
+You are the main destination-selection AI for Wanderlust.
 
-Your current task is to select EXACTLY FIVE destinations
-that deserve further research.
+Select EXACTLY THREE travel destinations.
 
-You are NOT the research layer.
+You are NOT the research agent.
 
-DO NOT browse the internet.
-DO NOT claim live prices.
-DO NOT claim live availability.
-DO NOT search for flights.
-DO NOT search for hotels.
-DO NOT create an itinerary.
+Do NOT browse the internet.
 
-Use the user's requirements to create five strong
-research candidates.
+Do NOT provide current prices.
+Do NOT provide current availability.
+Do NOT claim anything is booked.
+Do NOT create an itinerary.
 
-============================================================
-USER REQUEST
-============================================================
+Use the user's request and structured requirements to select
+the three strongest destination options.
 
+USER REQUEST:
 {user_input}
 
-============================================================
-TRIP REQUIREMENTS
-============================================================
-
+TRIP REQUIREMENTS:
 {json.dumps(
     preferences,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-TRIP INFORMATION
-============================================================
-
+TRIP INFORMATION:
 {json.dumps(
     trip_information,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-BUDGET
-============================================================
-
+BUDGET:
 {json.dumps(
     budget,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-RULES
-============================================================
-
-1. Respect all hard constraints.
-
-2. Pay attention to:
-   - country
-   - region
-   - trip scope
-   - number of travelers
-   - duration
-   - departure location
-   - travel dates
-   - budget
-   - transportation preferences
-   - accommodation preferences
-   - safety requirements
-
-3. Maximize compatibility with the user's preferences.
-
-4. Make the five candidates meaningfully different.
-
-5. Do not select destinations simply because they are famous.
-
-6. Each destination must have a clear research reason.
-
-7. Do not invent live information.
-
-8. Do not provide exact current prices.
-
-9. Do not create an itinerary.
-
-============================================================
-OUTPUT
-============================================================
-
-Return ONLY valid JSON.
+Return ONLY JSON in this exact structure:
 
 {{
     "research_strategy": "",
@@ -237,17 +189,32 @@ Return ONLY valid JSON.
             "name": "",
             "country": "",
             "reason": "",
+            "description": "",
             "research_priority": 1
+        }},
+        {{
+            "name": "",
+            "country": "",
+            "reason": "",
+            "description": "",
+            "research_priority": 2
+        }},
+        {{
+            "name": "",
+            "country": "",
+            "reason": "",
+            "description": "",
+            "research_priority": 3
         }}
     ]
 }}
 
-Exactly five unique candidates are required.
+There MUST be exactly three unique destinations.
 """
 
         response = self.client.interactions.create(
             model=self.model,
-            input=prompt
+            input=prompt,
         )
 
         content = getattr(
@@ -258,7 +225,7 @@ Exactly five unique candidates are required.
 
         if not content:
             raise ValueError(
-                "Gemini returned an empty candidate response."
+                "Gemini returned an empty response."
             )
 
         result = self._parse_json_object(
@@ -266,33 +233,42 @@ Exactly five unique candidates are required.
             "candidate destinations"
         )
 
-        raw_candidates = result.get("candidates")
+        candidates = result.get(
+            "candidates"
+        )
 
-        if not isinstance(raw_candidates, list):
+        if not isinstance(
+            candidates,
+            list
+        ):
             raise ValueError(
-                "Gemini candidate response does not contain "
-                "a candidates list."
+                "Gemini did not return a candidates list."
             )
 
         cleaned = []
         seen = set()
 
-        for candidate in raw_candidates:
+        for candidate in candidates:
 
-            if not isinstance(candidate, dict):
+            if not isinstance(
+                candidate,
+                dict
+            ):
                 continue
 
-            name = candidate.get("name")
-            country = candidate.get("country")
+            name = str(
+                candidate.get(
+                    "name",
+                    ""
+                )
+            ).strip()
 
-            if not isinstance(name, str):
-                continue
-
-            if not isinstance(country, str):
-                continue
-
-            name = name.strip()
-            country = country.strip()
+            country = str(
+                candidate.get(
+                    "country",
+                    ""
+                )
+            ).strip()
 
             if not name or not country:
                 continue
@@ -307,16 +283,6 @@ Exactly five unique candidates are required.
 
             seen.add(key)
 
-            try:
-                priority = int(
-                    candidate.get(
-                        "research_priority",
-                        len(cleaned) + 1
-                    )
-                )
-            except (TypeError, ValueError):
-                priority = len(cleaned) + 1
-
             cleaned.append({
                 "name": name,
                 "country": country,
@@ -326,13 +292,21 @@ Exactly five unique candidates are required.
                         ""
                     )
                 ).strip(),
-                "research_priority": priority
+                "description": str(
+                    candidate.get(
+                        "description",
+                        ""
+                    )
+                ).strip(),
+                "research_priority": len(
+                    cleaned
+                ) + 1,
             })
 
-        if len(cleaned) != 5:
+        if len(cleaned) != 3:
             raise ValueError(
-                "Main Gemini must return exactly five "
-                f"unique candidates. Got {len(cleaned)}."
+                "Gemini must return exactly three unique "
+                f"destinations. Got {len(cleaned)}."
             )
 
         return {
@@ -343,292 +317,62 @@ Exactly five unique candidates are required.
                 )
             ).strip(),
 
-            "candidates": cleaned
+            "candidates": cleaned,
         }
 
     # ==========================================================
-    # STEP 2
-    # CREATE RESEARCH PLAN
+    # RESEARCH + PEXELS
     # ==========================================================
 
-    def create_research_plan(
+    def research_destinations(
         self,
-        user_input,
-        trip_requirements,
         candidates,
-        trip_information=None
+        trip_requirements=None,
     ):
         """
-        Main Gemini determines what the research workers
-        should investigate.
+        Run:
 
-        It does NOT perform the research.
+            ResearchAgent
+            +
+            Pexels
+
+        concurrently.
+
+        ResearchAgent internally runs the three workers
+        concurrently.
         """
-
-        if not isinstance(trip_requirements, dict):
-            raise TypeError(
-                "trip_requirements must be a dictionary."
-            )
-
-        if not isinstance(candidates, list):
-            raise TypeError(
-                "candidates must be a list."
-            )
-
-        if len(candidates) != 5:
-            raise ValueError(
-                "Exactly five candidates are required."
-            )
-
-        if trip_information is None:
-            trip_information = {}
-
-        if not isinstance(trip_information, dict):
-            raise TypeError(
-                "trip_information must be a dictionary."
-            )
-
-        prompt = f"""
-You are the research-planning component of a travel
-planning AI.
-
-Create a research plan for THREE specialized research
-workers.
-
-DO NOT perform the research yourself.
-
-============================================================
-USER REQUEST
-============================================================
-
-{user_input}
-
-============================================================
-TRIP REQUIREMENTS
-============================================================
-
-{json.dumps(
-    trip_requirements,
-    indent=2,
-    default=str
-)}
-
-============================================================
-TRIP INFORMATION
-============================================================
-
-{json.dumps(
-    trip_information,
-    indent=2,
-    default=str
-)}
-
-============================================================
-CANDIDATES
-============================================================
-
-{json.dumps(
-    candidates,
-    indent=2,
-    default=str
-)}
-
-============================================================
-WORKER 1
-============================================================
-
-Focus on:
-
-- destination suitability
-- attractions
-- activities
-- nature
-- culture
-- experiences
-- things to do
-- suitability for the user's preferences
-
-============================================================
-WORKER 2
-============================================================
-
-Focus on:
-
-- transportation
-- travel time
-- departure logistics
-- airport/train access
-- local transportation
-- weather
-- seasonal considerations
-- practical travel difficulties
-
-============================================================
-WORKER 3
-============================================================
-
-Focus on:
-
-- affordability
-- accommodation
-- food
-- activities
-- transportation costs
-- major trip expenses
-- budget compatibility
-
-============================================================
-IMPORTANT
-============================================================
-
-Every candidate MUST appear in all three worker
-question dictionaries.
-
-Questions should be specific enough that the research
-workers know exactly what information they need.
-
-Do not answer the questions.
-
-============================================================
-OUTPUT
-============================================================
-
-Return ONLY valid JSON:
-
-{{
-    "worker_1_questions": {{
-        "Destination": []
-    }},
-
-    "worker_2_questions": {{
-        "Destination": []
-    }},
-
-    "worker_3_questions": {{
-        "Destination": []
-    }},
-
-    "required_evidence": []
-}}
-"""
-
-        response = self.client.interactions.create(
-            model=self.model,
-            input=prompt
-        )
-
-        content = getattr(
-            response,
-            "output_text",
-            None
-        )
-
-        if not content:
-            raise ValueError(
-                "Gemini returned an empty research plan."
-            )
-
-        result = self._parse_json_object(
-            content,
-            "research plan"
-        )
-
-        for key in (
-            "worker_1_questions",
-            "worker_2_questions",
-            "worker_3_questions"
-        ):
-
-            if not isinstance(
-                result.get(key),
-                dict
-            ):
-                result[key] = {}
 
         if not isinstance(
-            result.get("required_evidence"),
+            candidates,
             list
         ):
-            result["required_evidence"] = []
-
-        return result
-
-    # ==========================================================
-    # STEP 3
-    # EVALUATE RESEARCH
-    # ==========================================================
-
-    def evaluate_candidates(
-        self,
-        candidates,
-        trip_requirements,
-        research_results
-    ):
-        """
-        Deterministic evaluator.
-
-        This stage does NOT ask Gemini to decide the scores.
-
-        It uses the structured outputs from the three Ollama
-        research workers.
-
-        Scores:
-
-            Budget             25%
-            Preference fit     25%
-            Practicality       20%
-            Weather            15%
-            Travel effort      10%
-            Evidence quality    5%
-        """
-
-        if not isinstance(candidates, list):
             raise TypeError(
                 "candidates must be a list."
             )
 
-        if not isinstance(trip_requirements, dict):
-            raise TypeError(
-                "trip_requirements must be a dictionary."
+        if len(candidates) != 3:
+            raise ValueError(
+                "Exactly three candidates are required."
             )
 
-        if not isinstance(research_results, dict):
-            raise TypeError(
-                "research_results must be a dictionary."
-            )
+        if trip_requirements is None:
+            trip_requirements = {}
 
-        worker1 = research_results.get(
-            "worker_1",
-            {}
-        )
+        normalized = []
 
-        worker2 = research_results.get(
-            "worker_2",
-            {}
-        )
-
-        worker3 = research_results.get(
-            "worker_3",
-            {}
-        )
-
-        if not isinstance(worker1, dict):
-            worker1 = {}
-
-        if not isinstance(worker2, dict):
-            worker2 = {}
-
-        if not isinstance(worker3, dict):
-            worker3 = {}
-
-        evaluations = []
+        seen = set()
 
         for candidate in candidates:
 
-            if not isinstance(candidate, dict):
-                continue
+            if not isinstance(
+                candidate,
+                dict
+            ):
+                raise ValueError(
+                    "Each candidate must be a dictionary."
+                )
 
-            destination = str(
+            name = str(
                 candidate.get(
                     "name",
                     ""
@@ -642,472 +386,456 @@ Return ONLY valid JSON:
                 )
             ).strip()
 
-            if not destination:
-                continue
-
-            r1 = worker1.get(
-                destination,
-                {}
-            )
-
-            r2 = worker2.get(
-                destination,
-                {}
-            )
-
-            r3 = worker3.get(
-                destination,
-                {}
-            )
-
-            if not isinstance(r1, dict):
-                r1 = {}
-
-            if not isinstance(r2, dict):
-                r2 = {}
-
-            if not isinstance(r3, dict):
-                r3 = {}
-
-            # --------------------------------------------------
-            # Individual scores
-            # --------------------------------------------------
-
-            preference = self._fit_score(
-                r1.get(
-                    "preference_fit",
-                    {}
+            if not name:
+                raise ValueError(
+                    "Candidate has no destination name."
                 )
+
+            key = (
+                name.lower(),
+                country.lower()
             )
 
-            weather = self._fit_score(
-                r2.get(
-                    "weather_preference_fit",
-                    {}
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate destination: {name}"
                 )
-            )
 
-            budget = self._budget_score(
-                r3
-            )
+            seen.add(key)
 
-            practicality = self._practicality_score(
-                r2
-            )
-
-            travel_effort = self._travel_effort_score(
-                r2
-            )
-
-            evidence = self._evidence_score(
-                r1,
-                r2,
-                r3
-            )
-
-            # --------------------------------------------------
-            # Weighted overall score
-            # --------------------------------------------------
-
-            overall = round(
-                budget * 0.25
-                + preference * 0.25
-                + practicality * 0.20
-                + weather * 0.15
-                + travel_effort * 0.10
-                + evidence * 0.05,
-                2
-            )
-
-            evaluations.append({
-                "destination": destination,
+            normalized.append({
+                "name": name,
                 "country": country,
-
-                "scores": {
-                    "budget": budget,
-                    "preference": preference,
-                    "practicality": practicality,
-                    "weather": weather,
-                    "travel_effort": travel_effort,
-                    "evidence_quality": evidence,
-                    "overall": overall
-                }
+                "reason": str(
+                    candidate.get(
+                        "reason",
+                        ""
+                    )
+                ).strip(),
+                "description": str(
+                    candidate.get(
+                        "description",
+                        ""
+                    )
+                ).strip(),
+                "research_priority": candidate.get(
+                    "research_priority"
+                ),
             })
 
-        evaluations.sort(
-            key=lambda item:
-                item["scores"]["overall"],
-            reverse=True
+        # ------------------------------------------------------
+        # Research and Pexels are independent.
+        # ------------------------------------------------------
+
+        with ThreadPoolExecutor(
+            max_workers=2
+        ) as executor:
+
+            research_future = executor.submit(
+                self.research_agent.research,
+                normalized,
+                trip_requirements,
+            )
+
+            image_future = executor.submit(
+                self._get_destination_images,
+                normalized,
+            )
+
+            try:
+                research_result = (
+                    research_future.result()
+                )
+
+            except Exception as error:
+
+                research_result = {
+                    "success": False,
+                    "destinations": {},
+                    "workers": {},
+                    "verification": {},
+                    "errors": [
+                        f"ResearchAgent error: {error}"
+                    ],
+                }
+
+            try:
+                image_results = (
+                    image_future.result()
+                )
+
+            except Exception as error:
+
+                image_results = {}
+
+                for candidate in normalized:
+
+                    key = self._destination_key(
+                        candidate["name"],
+                        candidate["country"],
+                    )
+
+                    image_results[key] = {
+                        "image_url": None,
+                        "pexels_url": None,
+                        "photographer": None,
+                        "error": str(error),
+                    }
+
+        return self._combine_results(
+            normalized,
+            research_result,
+            image_results,
         )
 
-        for rank, item in enumerate(
-            evaluations,
-            start=1
+    # ==========================================================
+    # PEXELS
+    # ==========================================================
+
+    def _get_destination_images(
+        self,
+        candidates,
+    ):
+        results = {}
+
+        if not self.pexels_enabled:
+
+            for candidate in candidates:
+
+                key = self._destination_key(
+                    candidate["name"],
+                    candidate["country"],
+                )
+
+                results[key] = {
+                    "image_url": None,
+                    "pexels_url": None,
+                    "photographer": None,
+                    "error": "PEXELS_API_KEY is not set.",
+                }
+
+            return results
+
+        with ThreadPoolExecutor(
+            max_workers=3
+        ) as executor:
+
+            futures = {
+                executor.submit(
+                    self._get_single_image,
+                    candidate,
+                ): candidate
+                for candidate in candidates
+            }
+
+            for future in as_completed(
+                futures
+            ):
+
+                candidate = futures[future]
+
+                key = self._destination_key(
+                    candidate["name"],
+                    candidate["country"],
+                )
+
+                try:
+                    results[key] = future.result()
+
+                except Exception as error:
+
+                    results[key] = {
+                        "image_url": None,
+                        "pexels_url": None,
+                        "photographer": None,
+                        "error": str(error),
+                    }
+
+        return results
+
+    @staticmethod
+    def _get_single_image(
+        candidate
+    ):
+
+        result = get_destination_image(
+            destination_name=candidate["name"],
+            country=candidate["country"],
+        )
+
+        if not isinstance(
+            result,
+            dict
         ):
-            item["rank"] = rank
+            return {
+                "image_url": None,
+                "pexels_url": None,
+                "photographer": None,
+            }
 
         return {
-            "weights": {
-                "budget": 0.25,
-                "preference": 0.25,
-                "practicality": 0.20,
-                "weather": 0.15,
-                "travel_effort": 0.10,
-                "evidence_quality": 0.05
-            },
-
-            "candidates": evaluations
+            "image_url": result.get(
+                "image_url"
+            ),
+            "pexels_url": result.get(
+                "pexels_url"
+            ),
+            "photographer": result.get(
+                "photographer"
+            ),
         }
 
     # ==========================================================
-    # STEP 4
-    # FINAL GEMINI SELECTION
+    # COMBINE EVERYTHING
     # ==========================================================
 
-    def select_best_trips(
+    def _combine_results(
         self,
-        user_input,
-        trip_requirements,
-        research_results,
-        evaluation_results,
-        trip_information=None,
-        budget=None
+        candidates,
+        research_result,
+        image_results,
     ):
         """
-        Main Gemini makes the final decision.
+        IMPORTANT FIX:
 
-        It receives:
+        ResearchAgent's worker results are stored as:
 
-            - user requirements
-            - research evidence
-            - deterministic evaluator scores
+            research_result["workers"]["worker_1"]
+            research_result["workers"]["worker_2"]
+            research_result["workers"]["worker_3"]
 
-        and selects exactly three destinations.
+        The old TravelAgent incorrectly expected the detailed
+        worker reports to already be inside:
+
+            research_result["destinations"]
+
+        This version maps them correctly.
         """
 
-        if not isinstance(trip_requirements, dict):
-            raise TypeError(
-                "trip_requirements must be a dictionary."
-            )
+        if not isinstance(
+            research_result,
+            dict
+        ):
+            research_result = {
+                "success": False,
+                "workers": {},
+                "verification": {},
+                "errors": [
+                    "Invalid ResearchAgent result."
+                ],
+            }
 
-        if not isinstance(research_results, dict):
-            raise TypeError(
-                "research_results must be a dictionary."
-            )
-
-        if not isinstance(evaluation_results, dict):
-            raise TypeError(
-                "evaluation_results must be a dictionary."
-            )
-
-        if trip_information is None:
-            trip_information = {}
-
-        if budget is None:
-            budget = {}
-
-        prompt = f"""
-You are the FINAL DECISION-MAKER of a travel planning AI.
-
-Five destinations were researched by three specialized
-research workers.
-
-A deterministic evaluator independently scored them.
-
-Your task is to select EXACTLY THREE final travel options.
-
-============================================================
-USER REQUEST
-============================================================
-
-{user_input}
-
-============================================================
-TRIP REQUIREMENTS
-============================================================
-
-{json.dumps(
-    trip_requirements,
-    indent=2,
-    default=str
-)}
-
-============================================================
-TRIP INFORMATION
-============================================================
-
-{json.dumps(
-    trip_information,
-    indent=2,
-    default=str
-)}
-
-============================================================
-BUDGET
-============================================================
-
-{json.dumps(
-    budget,
-    indent=2,
-    default=str
-)}
-
-============================================================
-RESEARCH RESULTS
-============================================================
-
-{json.dumps(
-    research_results,
-    indent=2,
-    default=str
-)}
-
-============================================================
-EVALUATION RESULTS
-============================================================
-
-{json.dumps(
-    evaluation_results,
-    indent=2,
-    default=str
-)}
-
-============================================================
-DECISION RULES
-============================================================
-
-1. Respect every hard constraint.
-
-2. Use the evaluator scores as an important signal.
-
-3. Use the research evidence to understand WHY a
-   destination received its score.
-
-4. Do not blindly select the three highest scores if
-   research evidence clearly shows a hard constraint
-   violation.
-
-5. Never invent facts.
-
-6. Never invent prices.
-
-7. Never claim live availability.
-
-8. Never claim that something is booked.
-
-9. Do not browse.
-
-10. Do not create a detailed itinerary.
-
-11. Explain why each selected destination fits.
-
-12. Mention meaningful limitations.
-
-13. Prefer evidence-backed conclusions.
-
-14. Return exactly three options.
-
-============================================================
-OUTPUT
-============================================================
-
-Return ONLY valid JSON:
-
-{{
-    "selected_trips": [
-        {{
-            "rank": 1,
-            "destination": "",
-            "country": "",
-            "why_it_fits": "",
-            "highlights": [],
-            "limitations": [],
-            "budget_summary": "",
-            "practicality_summary": "",
-            "weather_summary": "",
-            "confidence": ""
-        }},
-        {{
-            "rank": 2,
-            "destination": "",
-            "country": "",
-            "why_it_fits": "",
-            "highlights": [],
-            "limitations": [],
-            "budget_summary": "",
-            "practicality_summary": "",
-            "weather_summary": "",
-            "confidence": ""
-        }},
-        {{
-            "rank": 3,
-            "destination": "",
-            "country": "",
-            "why_it_fits": "",
-            "highlights": [],
-            "limitations": [],
-            "budget_summary": "",
-            "practicality_summary": "",
-            "weather_summary": "",
-            "confidence": ""
-        }}
-    ]
-}}
-
-Exactly three options are required.
-"""
-
-        response = self.client.interactions.create(
-            model=self.model,
-            input=prompt
+        workers = research_result.get(
+            "workers",
+            {}
         )
 
-        content = getattr(
-            response,
-            "output_text",
-            None
-        )
+        if not isinstance(
+            workers,
+            dict
+        ):
+            workers = {}
 
-        if not content:
-            raise ValueError(
-                "Gemini returned an empty final selection."
-            )
+        combined = []
 
-        result = self._parse_json_object(
-            content,
-            "final trip selection"
-        )
-
-        selected = result.get(
-            "selected_trips"
-        )
-
-        if not isinstance(selected, list):
-            raise ValueError(
-                "Final Gemini response is missing "
-                "selected_trips."
-            )
-
-        if len(selected) != 3:
-            raise ValueError(
-                "Final Gemini must return exactly "
-                f"3 trips. Got {len(selected)}."
-            )
-
-        cleaned = []
-
-        for index, trip in enumerate(
-            selected,
+        for index, candidate in enumerate(
+            candidates,
             start=1
         ):
 
-            if not isinstance(trip, dict):
-                continue
-
-            destination = str(
-                trip.get(
-                    "destination",
-                    ""
-                )
-            ).strip()
-
-            country = str(
-                trip.get(
-                    "country",
-                    ""
-                )
-            ).strip()
-
-            if not destination:
-                continue
-
-            highlights = trip.get(
-                "highlights",
-                []
+            worker_key = (
+                f"worker_{index}"
             )
 
-            limitations = trip.get(
-                "limitations",
-                []
+            research = workers.get(
+                worker_key,
+                {}
             )
 
             if not isinstance(
-                highlights,
-                list
+                research,
+                dict
             ):
-                highlights = []
+                research = {}
 
-            if not isinstance(
-                limitations,
-                list
-            ):
-                limitations = []
+            image_key = self._destination_key(
+                candidate["name"],
+                candidate["country"],
+            )
 
-            cleaned.append({
+            image = image_results.get(
+                image_key,
+                {
+                    "image_url": None,
+                    "pexels_url": None,
+                    "photographer": None,
+                },
+            )
+
+            combined.append({
                 "rank": index,
-                "destination": destination,
-                "country": country,
 
-                "why_it_fits": str(
-                    trip.get(
-                        "why_it_fits",
-                        ""
-                    )
-                ).strip(),
-
-                "highlights": [
-                    str(item).strip()
-                    for item in highlights
-                    if str(item).strip()
+                "destination": candidate[
+                    "name"
                 ],
 
-                "limitations": [
-                    str(item).strip()
-                    for item in limitations
-                    if str(item).strip()
+                "country": candidate[
+                    "country"
                 ],
 
-                "budget_summary": str(
-                    trip.get(
-                        "budget_summary",
-                        ""
-                    )
-                ).strip(),
+                "reason": candidate.get(
+                    "reason",
+                    ""
+                ),
 
-                "practicality_summary": str(
-                    trip.get(
-                        "practicality_summary",
-                        ""
-                    )
-                ).strip(),
+                "description": candidate.get(
+                    "description",
+                    ""
+                ),
 
-                "weather_summary": str(
-                    trip.get(
-                        "weather_summary",
-                        ""
-                    )
-                ).strip(),
+                "research_priority": candidate.get(
+                    "research_priority",
+                    index,
+                ),
 
-                "confidence": str(
-                    trip.get(
-                        "confidence",
-                        ""
-                    )
-                ).strip()
+                "image": {
+                    "image_url": image.get(
+                        "image_url"
+                    ),
+                    "pexels_url": image.get(
+                        "pexels_url"
+                    ),
+                    "photographer": image.get(
+                        "photographer"
+                    ),
+                },
+
+                # Actual worker research.
+                "research": research,
             })
 
-        if len(cleaned) != 3:
-            raise ValueError(
-                "Final Gemini did not return three valid "
-                "trip options."
+        # ------------------------------------------------------
+        # IMPORTANT:
+        #
+        # success means the actual worker research completed.
+        #
+        # Gemma verification failure does NOT destroy research.
+        # ------------------------------------------------------
+
+        worker_success = all(
+            isinstance(
+                workers.get(
+                    f"worker_{i}"
+                ),
+                dict,
             )
+            and workers[
+                f"worker_{i}"
+            ].get(
+                "success",
+                False
+            )
+            for i in range(1, 4)
+        )
 
         return {
-            "selected_trips": cleaned
+            "success": worker_success,
+
+            "destinations": combined,
+
+            "research": {
+                "success": worker_success,
+
+                "workers": workers,
+
+                "verification": research_result.get(
+                    "verification",
+                    {},
+                ),
+
+                "errors": research_result.get(
+                    "errors",
+                    [],
+                ),
+            },
         }
 
     # ==========================================================
-    # SELECTED TRIP DETAIL
+    # COMPLETE RECOMMENDATION PIPELINE
+    # ==========================================================
+
+    def get_trip_recommendations(
+        self,
+        user_input,
+        preferences,
+        budget,
+        trip_information=None,
+    ):
+        """
+        Complete recommendation pipeline.
+
+        1. Gemini selects exactly 3.
+        2. ResearchAgent researches exactly those 3.
+        3. Workers run concurrently.
+        4. Gemma performs lightweight QC.
+        5. Pexels gets images concurrently.
+        6. Results are combined.
+        """
+
+        candidate_result = self.find_candidates(
+            user_input=user_input,
+            preferences=preferences,
+            budget=budget,
+            trip_information=trip_information,
+        )
+
+        candidates = candidate_result[
+            "candidates"
+        ]
+
+        research_requirements = {
+            "preferences": preferences,
+            "budget": budget,
+            "trip_information": (
+                trip_information
+                if isinstance(
+                    trip_information,
+                    dict
+                )
+                else {}
+            ),
+            "user_request": user_input,
+        }
+
+        enriched = self.research_destinations(
+            candidates=candidates,
+            trip_requirements=research_requirements,
+        )
+
+        return {
+            "success": enriched.get(
+                "success",
+                False,
+            ),
+
+            "research_strategy": candidate_result.get(
+                "research_strategy",
+                "",
+            ),
+
+            "destinations": enriched.get(
+                "destinations",
+                [],
+            ),
+
+            "research": enriched.get(
+                "research",
+                {},
+            ),
+        }
+
+    # ==========================================================
+    # SELECTED TRIP
     # ==========================================================
 
     def build_selected_trip(
@@ -1118,120 +846,106 @@ Exactly three options are required.
         budget,
         research=None,
         map_data=None,
-        trip_information=None
+        trip_information=None,
     ):
         """
-        Build a detailed cost summary after the user has
-        selected one of the recommended destinations.
+        Generate cost information after the user selects
+        one of the three destinations.
 
-        This is NOT part of the candidate research stage.
+        This remains separate from recommendation generation.
         """
 
-        if research is None:
-            research = {}
+        research = (
+            research
+            if isinstance(research, dict)
+            else {}
+        )
 
-        if map_data is None:
-            map_data = []
+        map_data = (
+            map_data
+            if isinstance(map_data, list)
+            else []
+        )
 
-        if trip_information is None:
-            trip_information = {}
+        trip_information = (
+            trip_information
+            if isinstance(trip_information, dict)
+            else {}
+        )
+
+        if not isinstance(
+            preferences,
+            dict
+        ):
+            raise TypeError(
+                "preferences must be a dictionary."
+            )
+
+        if not isinstance(
+            budget,
+            dict
+        ):
+            raise TypeError(
+                "budget must be a dictionary."
+            )
 
         prompt = f"""
-Create a detailed trip cost summary for the destination
-selected by the user.
+You are the trip cost-analysis component of Wanderlust.
 
-============================================================
-SELECTED DESTINATION
-============================================================
+The user has already selected this destination:
 
 {selected_destination}
 
-============================================================
-USER REQUEST
-============================================================
-
+USER REQUEST:
 {user_input}
 
-============================================================
-TRIP REQUIREMENTS
-============================================================
-
+TRIP REQUIREMENTS:
 {json.dumps(
     preferences,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-BUDGET
-============================================================
-
+BUDGET:
 {json.dumps(
     budget,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-RESEARCH
-============================================================
-
+RESEARCH:
 {json.dumps(
     research,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-MAP DATA
-============================================================
-
+MAP DATA:
 {json.dumps(
     map_data,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-TRIP INFORMATION
-============================================================
-
+TRIP INFORMATION:
 {json.dumps(
     trip_information,
-    indent=2,
+    ensure_ascii=False,
     default=str
 )}
 
-============================================================
-RULES
-============================================================
+Rules:
 
-1. Use only supplied research.
+- Use only supplied information.
+- Do not browse.
+- Do not invent prices.
+- Unknown prices must be null.
+- Do not claim bookings.
+- Do not claim availability.
+- Do not invent schedules.
+- Calculate totals from known numeric values only.
 
-2. Do not invent prices.
-
-3. If a price is unknown, use null.
-
-4. Do not claim bookings.
-
-5. Do not claim availability.
-
-6. Do not invent transportation schedules.
-
-7. Do not invent hotel availability.
-
-8. Do not browse.
-
-9. Calculate the total only from known numeric
-   cost values.
-
-10. Clearly identify unknown costs.
-
-============================================================
-OUTPUT
-============================================================
-
-Return ONLY valid JSON:
+Return ONLY JSON:
 
 {{
     "destination": "",
@@ -1251,7 +965,7 @@ Return ONLY valid JSON:
 
         response = self.client.interactions.create(
             model=self.model,
-            input=prompt
+            input=prompt,
         )
 
         content = getattr(
@@ -1275,14 +989,20 @@ Return ONLY valid JSON:
             []
         )
 
-        if not isinstance(costs, list):
+        if not isinstance(
+            costs,
+            list
+        ):
             costs = []
 
         cleaned_costs = []
 
         for cost in costs:
 
-            if not isinstance(cost, dict):
+            if not isinstance(
+                cost,
+                dict
+            ):
                 continue
 
             amount = cost.get(
@@ -1318,7 +1038,7 @@ Return ONLY valid JSON:
                         "description",
                         ""
                     )
-                ).strip()
+                ).strip(),
             })
 
         total = round(
@@ -1330,16 +1050,16 @@ Return ONLY valid JSON:
             2
         )
 
-        unknown_costs = result.get(
+        unknown = result.get(
             "unknown_costs",
             []
         )
 
         if not isinstance(
-            unknown_costs,
+            unknown,
             list
         ):
-            unknown_costs = []
+            unknown = []
 
         notes = result.get(
             "notes",
@@ -1364,383 +1084,41 @@ Return ONLY valid JSON:
 
             "total_estimated_cost": total,
 
-            "unknown_costs": unknown_costs,
+            "unknown_costs": [
+                str(item).strip()
+                for item in unknown
+                if str(item).strip()
+            ],
 
             "within_budget": result.get(
                 "within_budget",
                 True
             ),
 
-            "notes": notes
+            "notes": [
+                str(item).strip()
+                for item in notes
+                if str(item).strip()
+            ],
         }
 
     # ==========================================================
-    # SCORING HELPER
-    # PREFERENCE / WEATHER FIT
+    # DESTINATION KEY
     # ==========================================================
 
     @staticmethod
-    def _fit_score(
-        fit_data,
-        default=50
+    def _destination_key(
+        destination,
+        country
     ):
-
-        if not isinstance(
-            fit_data,
-            dict
-        ):
-            return default
-
-        matches = fit_data.get(
-            "matches",
-            []
-        )
-
-        partial = fit_data.get(
-            "partial_matches",
-            []
-        )
-
-        conflicts = fit_data.get(
-            "conflicts",
-            []
-        )
-
-        if not isinstance(
-            matches,
-            list
-        ):
-            matches = []
-
-        if not isinstance(
-            partial,
-            list
-        ):
-            partial = []
-
-        if not isinstance(
-            conflicts,
-            list
-        ):
-            conflicts = []
-
-        score = (
-            50
-            + min(len(matches), 8) * 7
-            + min(len(partial), 5) * 2
-            - min(len(conflicts), 8) * 10
-        )
-
-        return max(
-            0,
-            min(
-                100,
-                score
-            )
+        return (
+            f"{str(destination).strip().lower()}"
+            f"|"
+            f"{str(country).strip().lower()}"
         )
 
     # ==========================================================
-    # SCORING HELPER
-    # BUDGET
-    # ==========================================================
-
-    @staticmethod
-    def _budget_score(
-        research
-    ):
-
-        if not isinstance(
-            research,
-            dict
-        ):
-            return 50
-
-        compatibility = research.get(
-            "budget_compatibility",
-            {}
-        )
-
-        score = TravelAgent._fit_score(
-            compatibility
-        )
-
-        affordability = research.get(
-            "affordability",
-            {}
-        )
-
-        if isinstance(
-            affordability,
-            dict
-        ):
-
-            level = str(
-                affordability.get(
-                    "overall_level",
-                    ""
-                )
-            ).lower()
-
-            if level in (
-                "very inexpensive",
-                "inexpensive"
-            ):
-                score += 10
-
-            elif level == "moderate":
-                score += 3
-
-            elif level in (
-                "expensive",
-                "very expensive"
-            ):
-                score -= 10
-
-        return max(
-            0,
-            min(
-                100,
-                score
-            )
-        )
-
-    # ==========================================================
-    # SCORING HELPER
-    # PRACTICALITY
-    # ==========================================================
-
-    @staticmethod
-    def _practicality_score(
-        research
-    ):
-
-        if not isinstance(
-            research,
-            dict
-        ):
-            return 50
-
-        data = research.get(
-            "transportation_practicality",
-            {}
-        )
-
-        if not isinstance(
-            data,
-            dict
-        ):
-            return 50
-
-        score = 50
-
-        text = " ".join([
-            str(
-                data.get(
-                    "convenience",
-                    ""
-                )
-            ),
-
-            str(
-                data.get(
-                    "accessibility",
-                    ""
-                )
-            ),
-
-            str(
-                data.get(
-                    "complexity",
-                    ""
-                )
-            )
-        ]).lower()
-
-        if any(
-            word in text
-            for word in (
-                "easy",
-                "excellent",
-                "convenient",
-                "good"
-            )
-        ):
-            score += 15
-
-        if any(
-            word in text
-            for word in (
-                "difficult",
-                "poor",
-                "limited",
-                "complex"
-            )
-        ):
-            score -= 15
-
-        local_transport = research.get(
-            "local_transportation",
-            {}
-        )
-
-        if isinstance(
-            local_transport,
-            dict
-        ):
-
-            if local_transport.get(
-                "car_required"
-            ) is False:
-                score += 5
-
-            elif local_transport.get(
-                "car_required"
-            ) is True:
-                score -= 10
-
-        return max(
-            0,
-            min(
-                100,
-                score
-            )
-        )
-
-    # ==========================================================
-    # SCORING HELPER
-    # TRAVEL EFFORT
-    # ==========================================================
-
-    @staticmethod
-    def _travel_effort_score(
-        research
-    ):
-
-        if not isinstance(
-            research,
-            dict
-        ):
-            return 50
-
-        departure = research.get(
-            "departure_analysis",
-            {}
-        )
-
-        if not isinstance(
-            departure,
-            dict
-        ):
-            return 50
-
-        score = 60
-
-        complexity = str(
-            departure.get(
-                "connection_complexity",
-                ""
-            )
-        ).lower()
-
-        if any(
-            word in complexity
-            for word in (
-                "easy",
-                "simple",
-                "low"
-            )
-        ):
-            score += 20
-
-        if any(
-            word in complexity
-            for word in (
-                "complex",
-                "difficult",
-                "high",
-                "multiple"
-            )
-        ):
-            score -= 20
-
-        if departure.get(
-            "direct_travel_possible"
-        ) is True:
-            score += 10
-
-        return max(
-            0,
-            min(
-                100,
-                score
-            )
-        )
-
-    # ==========================================================
-    # SCORING HELPER
-    # EVIDENCE QUALITY
-    # ==========================================================
-
-    @staticmethod
-    def _evidence_score(
-        *research_objects
-    ):
-
-        total = 0
-        quality = 0
-
-        for research in research_objects:
-
-            if not isinstance(
-                research,
-                dict
-            ):
-                continue
-
-            evidence = research.get(
-                "evidence",
-                []
-            )
-
-            if not isinstance(
-                evidence,
-                list
-            ):
-                continue
-
-            total += len(
-                evidence
-            )
-
-            for item in evidence:
-
-                if not isinstance(
-                    item,
-                    dict
-                ):
-                    continue
-
-                if str(
-                    item.get(
-                        "source",
-                        ""
-                    )
-                ).strip():
-                    quality += 1
-
-        if total == 0:
-            return 20
-
-        return max(
-            0,
-            min(
-                100,
-                20 + quality * 8
-            )
-        )
-
-    # ==========================================================
-    # JSON PARSER
+    # GEMINI JSON PARSER
     # ==========================================================
 
     @staticmethod
@@ -1748,13 +1126,6 @@ Return ONLY valid JSON:
         content,
         description="response"
     ):
-        """
-        Safely parse a Gemini response that is expected
-        to contain a JSON object.
-
-        Handles normal JSON and JSON wrapped in Markdown
-        code fences.
-        """
 
         if not isinstance(
             content,
@@ -1766,37 +1137,39 @@ Return ONLY valid JSON:
 
         content = content.strip()
 
-        # ------------------------------------------------------
-        # Remove Markdown JSON fences
-        # ------------------------------------------------------
-
         if content.startswith(
-            "```json"
-        ):
-
-            content = content[
-                len("```json"):
-            ].strip()
-
-        elif content.startswith(
             "```"
         ):
 
-            content = content[
-                len("```"):
-            ].strip()
+            lines = content.splitlines()
 
-        if content.endswith(
-            "```"
-        ):
+            if lines:
+                lines = lines[1:]
 
-            content = content[
-                :-3
-            ].strip()
+            if (
+                lines
+                and lines[-1].strip() == "```"
+            ):
+                lines = lines[:-1]
 
-        # ------------------------------------------------------
-        # Find JSON object
-        # ------------------------------------------------------
+            content = "\n".join(
+                lines
+            ).strip()
+
+        try:
+
+            result = json.loads(
+                content
+            )
+
+            if isinstance(
+                result,
+                dict
+            ):
+                return result
+
+        except json.JSONDecodeError:
+            pass
 
         start = content.find(
             "{"
@@ -1811,20 +1184,14 @@ Return ONLY valid JSON:
             or end == -1
             or end <= start
         ):
-
             raise ValueError(
-                "Gemini did not return a JSON object "
-                f"for {description}."
+                f"Gemini did not return JSON for {description}."
             )
-
-        json_text = content[
-            start:end + 1
-        ]
 
         try:
 
             result = json.loads(
-                json_text
+                content[start:end + 1]
             )
 
         except json.JSONDecodeError as error:
@@ -1837,7 +1204,6 @@ Return ONLY valid JSON:
             result,
             dict
         ):
-
             raise ValueError(
                 f"Gemini {description} must be a JSON object."
             )

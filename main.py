@@ -1,13 +1,10 @@
 import json
-import os
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import database
 
 from ai.mood_agent import MoodAgent
 from ai.travel_agent import TravelAgent
-from ai.research_agent import ResearchAgent
 
 from travel.budget import Budget
 from location.map import MapService
@@ -37,36 +34,7 @@ TRIPS = {}
 
 mood_agent = None
 travel_agent = None
-research_agent = None
 map_service = None
-
-
-# ==============================================================
-# CONFIGURATION
-# ==============================================================
-
-def _get_int_env(
-    name,
-    default
-):
-
-    try:
-        return max(
-            1,
-            int(
-                os.getenv(
-                    name,
-                    str(default)
-                )
-            )
-        )
-
-    except (
-        TypeError,
-        ValueError
-    ):
-
-        return default
 
 
 # ==============================================================
@@ -77,7 +45,6 @@ def initialize_systems():
 
     global mood_agent
     global travel_agent
-    global research_agent
     global map_service
 
     database.initialize_database()
@@ -91,7 +58,17 @@ def initialize_systems():
         mood_agent = MoodAgent()
 
     # ----------------------------------------------------------
-    # Main Gemini
+    # TravelAgent
+    #
+    # IMPORTANT:
+    #
+    # TravelAgent now internally owns:
+    #
+    # Gemini
+    # ResearchAgent
+    # Pexels
+    #
+    # main.py does NOT instantiate ResearchAgent separately.
     # ----------------------------------------------------------
 
     if travel_agent is None:
@@ -99,15 +76,7 @@ def initialize_systems():
         travel_agent = TravelAgent()
 
     # ----------------------------------------------------------
-    # Ollama Research System
-    # ----------------------------------------------------------
-
-    if research_agent is None:
-
-        research_agent = ResearchAgent()
-
-    # ----------------------------------------------------------
-    # Map Service
+    # MapService
     # ----------------------------------------------------------
 
     if map_service is None:
@@ -126,6 +95,7 @@ def make_json_safe(data):
         return json.loads(
             json.dumps(
                 data,
+                ensure_ascii=False,
                 default=str
             )
         )
@@ -225,6 +195,46 @@ def get_saved_trip(
 
 
 # ==============================================================
+# GET TRIP
+# ==============================================================
+
+def get_trip(
+    trip_id
+):
+
+    try:
+
+        trip_id = int(
+            trip_id
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        raise ValueError(
+            "trip_id must be a valid integer."
+        )
+
+    database.initialize_database()
+
+    saved_trip = database.get_trip(
+        trip_id
+    )
+
+    if saved_trip is None:
+
+        return None
+
+    return make_json_safe(
+        normalize_trip_information(
+            saved_trip
+        )
+    )
+
+
+# ==============================================================
 # HOME DESTINATIONS
 # ==============================================================
 
@@ -255,8 +265,10 @@ def get_home_destinations(
 
     database.initialize_database()
 
-    destinations = database.get_home_destinations(
-        limit
+    destinations = (
+        database.get_home_destinations(
+            limit
+        )
     )
 
     return make_json_safe(
@@ -304,46 +316,6 @@ def create_trip(
 
 
 # ==============================================================
-# GET TRIP
-# ==============================================================
-
-def get_trip(
-    trip_id
-):
-
-    try:
-
-        trip_id = int(
-            trip_id
-        )
-
-    except (
-        TypeError,
-        ValueError
-    ):
-
-        raise ValueError(
-            "trip_id must be a valid integer."
-        )
-
-    database.initialize_database()
-
-    saved_trip = database.get_trip(
-        trip_id
-    )
-
-    if saved_trip is None:
-
-        return None
-
-    return make_json_safe(
-        normalize_trip_information(
-            saved_trip
-        )
-    )
-
-
-# ==============================================================
 # ACTIVE SESSION
 # ==============================================================
 
@@ -378,6 +350,91 @@ def get_active_trip(
         )
 
     return trip
+
+
+# ==============================================================
+# CREATE TRIP STATE
+# ==============================================================
+
+def create_trip_state(
+    trip_id,
+    session_id,
+    trip_information,
+    budget
+):
+
+    return {
+
+        "trip_id":
+            trip_id,
+
+        "session_id":
+            session_id,
+
+        "status":
+            "planning",
+
+        "original_user_input":
+            "",
+
+        "trip_information":
+            trip_information,
+
+        # ------------------------------------------------------
+        # MOOD AGENT
+        # ------------------------------------------------------
+
+        "trip_requirements":
+            {},
+
+        "preferences":
+            {},
+
+        # ------------------------------------------------------
+        # NEW TRAVEL AGENT PIPELINE
+        # ------------------------------------------------------
+
+        "candidate_result":
+            {},
+
+        "candidates":
+            [],
+
+        "candidate_names":
+            [],
+
+        # Research is now already enriched by TravelAgent.
+        "research":
+            {},
+
+        # Direct frontend-ready options.
+        "travel_options":
+            [],
+
+        # ------------------------------------------------------
+        # USER SELECTION
+        # ------------------------------------------------------
+
+        "selected_destination":
+            None,
+
+        "selected_trip":
+            None,
+
+        # ------------------------------------------------------
+        # MAP
+        # ------------------------------------------------------
+
+        "map_data":
+            [],
+
+        # ------------------------------------------------------
+        # BUDGET
+        # ------------------------------------------------------
+
+        "budget":
+            budget
+    }
 
 
 # ==============================================================
@@ -450,221 +507,6 @@ def validate_start_request(
 
 
 # ==============================================================
-# EXTRACT CANDIDATES
-# ==============================================================
-
-def extract_candidates(
-    candidate_result
-):
-
-    candidates = []
-
-    if not isinstance(
-        candidate_result,
-        dict
-    ):
-
-        return candidates
-
-    raw_candidates = candidate_result.get(
-        "candidates",
-        []
-    )
-
-    if not isinstance(
-        raw_candidates,
-        list
-    ):
-
-        return candidates
-
-    for candidate in raw_candidates:
-
-        if isinstance(
-            candidate,
-            dict
-        ):
-
-            name = candidate.get(
-                "name"
-            )
-
-            if not name:
-
-                continue
-
-            candidates.append({
-
-                "name":
-                    str(
-                        name
-                    ).strip(),
-
-                "country":
-                    (
-                        str(
-                            candidate.get(
-                                "country"
-                            )
-                        ).strip()
-                        if candidate.get(
-                            "country"
-                        )
-                        else None
-                    ),
-
-                "description":
-                    candidate.get(
-                        "description"
-                    ),
-
-                "reason":
-                    candidate.get(
-                        "reason"
-                    ),
-
-                "research_priority":
-                    candidate.get(
-                        "research_priority"
-                    )
-            })
-
-        elif isinstance(
-            candidate,
-            str
-        ):
-
-            candidate = candidate.strip()
-
-            if candidate:
-
-                candidates.append({
-
-                    "name":
-                        candidate,
-
-                    "country":
-                        None,
-
-                    "description":
-                        None,
-
-                    "reason":
-                        None,
-
-                    "research_priority":
-                        None
-                })
-
-    return candidates
-
-
-# ==============================================================
-# CREATE TRIP STATE
-# ==============================================================
-
-def create_trip_state(
-    trip_id,
-    session_id,
-    trip_information,
-    budget
-):
-
-    return {
-
-        "trip_id":
-            trip_id,
-
-        "session_id":
-            session_id,
-
-        "status":
-            "planning",
-
-        "original_user_input":
-            "",
-
-        "trip_information":
-            trip_information,
-
-        # ------------------------------------------------------
-        # MOOD AGENT
-        # ------------------------------------------------------
-
-        "trip_requirements":
-            {},
-
-        "preferences":
-            {},
-
-        # ------------------------------------------------------
-        # MAIN GEMINI
-        # ------------------------------------------------------
-
-        "candidate_result":
-            {},
-
-        "candidates":
-            [],
-
-        "candidate_names":
-            [],
-
-        "research_plan":
-            {},
-
-        # ------------------------------------------------------
-        # OLLAMA RESEARCH
-        # ------------------------------------------------------
-
-        "research":
-            {},
-
-        # ------------------------------------------------------
-        # EVALUATOR
-        # ------------------------------------------------------
-
-        "evaluation":
-            {},
-
-        "ranked_candidates":
-            [],
-
-        # ------------------------------------------------------
-        # FINAL GEMINI
-        # ------------------------------------------------------
-
-        "travel_options":
-            [],
-
-        # ------------------------------------------------------
-        # USER SELECTION
-        # ------------------------------------------------------
-
-        "selected_destination":
-            None,
-
-        "selected_trip":
-            None,
-
-        # ------------------------------------------------------
-        # MAP
-        # ------------------------------------------------------
-
-        "map_data":
-            [],
-
-        # ------------------------------------------------------
-        # BUDGET
-        # ------------------------------------------------------
-
-        "budget":
-            budget
-    }
-
-
-# ==============================================================
-# STEP 2
 # MOOD AGENT
 # ==============================================================
 
@@ -675,7 +517,7 @@ def extract_trip_requirements(
 
     initialize_systems()
 
-    trip_requirements = mood_agent.interpret(
+    result = mood_agent.interpret(
 
         user_input=
             user_input,
@@ -685,63 +527,15 @@ def extract_trip_requirements(
     )
 
     if not isinstance(
-        trip_requirements,
+        result,
         dict
     ):
 
         raise ValueError(
-            "MoodAgent returned an invalid "
-            "TripRequirements object."
+            "MoodAgent returned invalid trip requirements."
         )
 
-    return trip_requirements
-
-
-# ==============================================================
-# STEP 3
-# MAIN GEMINI — CANDIDATES
-# ==============================================================
-
-def generate_candidates(
-    user_input,
-    trip_requirements,
-    trip_information,
-    budget
-):
-
-    initialize_systems()
-
-    budget_state = budget.get_status()
-
-    candidate_result = travel_agent.find_candidates(
-
-        user_input=
-            user_input,
-
-        preferences=
-            trip_requirements,
-
-        budget=
-            budget_state,
-
-        trip_information=
-            trip_information
-    )
-
-    candidates = extract_candidates(
-        candidate_result
-    )
-
-    if len(candidates) != 5:
-
-        raise ValueError(
-            "TravelAgent must return exactly five candidates."
-        )
-
-    return (
-        candidate_result,
-        candidates
-    )
+    return result
 
 
 # ==============================================================
@@ -782,6 +576,14 @@ def destination_names(
 
             continue
 
+        name = str(
+            name
+        ).strip()
+
+        country = str(
+            country or ""
+        ).strip()
+
         if country:
 
             names.append(
@@ -791,530 +593,135 @@ def destination_names(
         else:
 
             names.append(
-                str(name)
+                name
             )
 
     return names
 
 
 # ==============================================================
-# BUILD RESEARCH RESULT CONTAINER
+# EXTRACT CANDIDATES FROM TRAVEL AGENT
 # ==============================================================
 
-def create_research_result_container():
-
-    return {
-
-        "worker_1":
-            {},
-
-        "worker_2":
-            {},
-
-        "worker_3":
-            {},
-
-        "errors":
-            []
-    }
-
-
-# ==============================================================
-# GET RESEARCH QUESTIONS
-# ==============================================================
-
-def get_research_questions(
-    research_plan,
-    worker_name,
-    destination
+def extract_candidates(
+    result
 ):
-
-    if not isinstance(
-        research_plan,
-        dict
-    ):
-
-        return []
-
-    questions_map = research_plan.get(
-        f"{worker_name}_questions",
-        {}
-    )
-
-    if not isinstance(
-        questions_map,
-        dict
-    ):
-
-        return []
-
-    questions = questions_map.get(
-        destination,
-        []
-    )
-
-    if not isinstance(
-        questions,
-        list
-    ):
-
-        return []
-
-    return questions
-
-
-# ==============================================================
-# STEP 4
-# OLLAMA RESEARCH — ONE DESTINATION
-# ==============================================================
-
-def research_one_destination(
-    candidate,
-    trip_requirements,
-    research_plan
-):
-
-    destination = str(
-        candidate.get(
-            "name",
-            ""
-        )
-    ).strip()
-
-    country = str(
-        candidate.get(
-            "country",
-            ""
-        )
-    ).strip()
-
-    if not destination:
-
-        raise ValueError(
-            "Candidate has no destination name."
-        )
-
-    # ----------------------------------------------------------
-    # Get the questions generated by Main Gemini.
-    # ----------------------------------------------------------
-
-    worker1_questions = get_research_questions(
-        research_plan,
-        "worker_1",
-        destination
-    )
-
-    worker2_questions = get_research_questions(
-        research_plan,
-        "worker_2",
-        destination
-    )
-
-    worker3_questions = get_research_questions(
-        research_plan,
-        "worker_3",
-        destination
-    )
-
-    # ----------------------------------------------------------
-    # ResearchAgent runs its three Ollama workers in parallel.
-    # ----------------------------------------------------------
-
-    result = research_agent.research_all_workers(
-
-        destination=
-            destination,
-
-        country=
-            country,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_plan={
-            "worker_1_questions": {
-                destination:
-                    worker1_questions
-            },
-
-            "worker_2_questions": {
-                destination:
-                    worker2_questions
-            },
-
-            "worker_3_questions": {
-                destination:
-                    worker3_questions
-            }
-        }
-    )
 
     if not isinstance(
         result,
         dict
     ):
 
-        raise ValueError(
-            f"ResearchAgent returned invalid data "
-            f"for {destination}."
-        )
+        return []
 
-    return (
-        destination,
-        result
-    )
-
-
-# ==============================================================
-# STEP 4
-# OLLAMA RESEARCH — ALL FIVE DESTINATIONS
-# ==============================================================
-
-def run_research_pipeline(
-    candidates,
-    trip_requirements,
-    research_plan
-):
-
-    initialize_systems()
-
-    if not isinstance(
-        candidates,
-        list
-    ):
-
-        raise TypeError(
-            "candidates must be a list."
-        )
-
-    if len(candidates) != 5:
-
-        raise ValueError(
-            "Exactly five candidates are required."
-        )
-
-    results = create_research_result_container()
-
-    # ----------------------------------------------------------
-    # Five destination jobs run concurrently.
-    #
-    # Each ResearchAgent job then launches:
-    #
-    # Worker 1
-    # Worker 2
-    # Worker 3
-    #
-    # concurrently.
-    #
-    # Therefore the intended structure is:
-    #
-    #       5 destinations
-    #             |
-    #       +-----+-----+
-    #       |     |     |
-    #      W1    W2    W3
-    #
-    # up to 15 Ollama calls.
-    # ----------------------------------------------------------
-
-    max_destination_jobs = _get_int_env(
-        "OLLAMA_DESTINATION_CONCURRENCY",
-        5
-    )
-
-    max_destination_jobs = min(
-        max_destination_jobs,
-        len(candidates)
-    )
-
-    with ThreadPoolExecutor(
-        max_workers=max_destination_jobs
-    ) as executor:
-
-        future_map = {
-
-            executor.submit(
-                research_one_destination,
-                candidate,
-                trip_requirements,
-                research_plan
-            ):
-                candidate
-
-            for candidate in candidates
-        }
-
-        for future in as_completed(
-            future_map
-        ):
-
-            candidate = future_map[
-                future
-            ]
-
-            destination = str(
-                candidate.get(
-                    "name",
-                    ""
-                )
-            ).strip()
-
-            country = str(
-                candidate.get(
-                    "country",
-                    ""
-                )
-            ).strip()
-
-            try:
-
-                (
-                    destination,
-                    destination_result
-                ) = future.result()
-
-                # --------------------------------------------------
-                # ResearchAgent returns:
-                #
-                # {
-                #   "worker_1": {...},
-                #   "worker_2": {...},
-                #   "worker_3": {...}
-                # }
-                #
-                # Convert it into the structure expected by
-                # TravelAgent's evaluator.
-                # --------------------------------------------------
-
-                for worker_name in (
-                    "worker_1",
-                    "worker_2",
-                    "worker_3"
-                ):
-
-                    worker_result = (
-                        destination_result.get(
-                            worker_name
-                        )
-                    )
-
-                    if worker_result is None:
-
-                        results[
-                            worker_name
-                        ][
-                            destination
-                        ] = {
-
-                            "destination":
-                                destination,
-
-                            "country":
-                                country,
-
-                            "success":
-                                False,
-
-                            "error":
-                                (
-                                    "ResearchAgent did not "
-                                    f"return {worker_name}."
-                                )
-                        }
-
-                    else:
-
-                        results[
-                            worker_name
-                        ][
-                            destination
-                        ] = worker_result
-
-                        # ------------------------------------------------
-                        # Detect worker-level failures.
-                        # ------------------------------------------------
-
-                        if (
-                            isinstance(
-                                worker_result,
-                                dict
-                            )
-                            and
-                            worker_result.get(
-                                "success"
-                            ) is False
-                        ):
-
-                            results[
-                                "errors"
-                            ].append({
-
-                                "worker":
-                                    worker_name,
-
-                                "destination":
-                                    destination,
-
-                                "error":
-                                    worker_result.get(
-                                        "error",
-                                        "Worker failed."
-                                    )
-                            })
-
-            except Exception as error:
-
-                error_record = {
-
-                    "destination":
-                        destination,
-
-                    "country":
-                        country,
-
-                    "error":
-                        str(error)
-                }
-
-                results[
-                    "errors"
-                ].append(
-                    error_record
-                )
-
-                # --------------------------------------------------
-                # Preserve a result for every worker so the
-                # evaluator can still process the candidate.
-                # --------------------------------------------------
-
-                for worker_name in (
-                    "worker_1",
-                    "worker_2",
-                    "worker_3"
-                ):
-
-                    results[
-                        worker_name
-                    ][
-                        destination
-                    ] = {
-
-                        "destination":
-                            destination,
-
-                        "country":
-                            country,
-
-                        "success":
-                            False,
-
-                        "error":
-                            str(error)
-                    }
-
-    return results
-
-
-# ==============================================================
-# STEP 5
-# EVALUATION
-# ==============================================================
-
-def evaluate_research(
-    candidates,
-    trip_requirements,
-    research_results
-):
-
-    initialize_systems()
-
-    evaluation = travel_agent.evaluate_candidates(
-
-        candidates=
-            candidates,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_results=
-            research_results
-    )
-
-    if not isinstance(
-        evaluation,
-        dict
-    ):
-
-        raise ValueError(
-            "TravelAgent evaluator returned invalid data."
-        )
-
-    return evaluation
-
-
-# ==============================================================
-# STEP 6
-# FINAL GEMINI SELECTION
-# ==============================================================
-
-def select_final_trips(
-    user_input,
-    trip_requirements,
-    research_results,
-    evaluation_results,
-    trip_information,
-    budget
-):
-
-    initialize_systems()
-
-    final_result = travel_agent.select_best_trips(
-
-        user_input=
-            user_input,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_results=
-            research_results,
-
-        evaluation_results=
-            evaluation_results,
-
-        trip_information=
-            trip_information,
-
-        budget=
-            budget.get_status()
-    )
-
-    if not isinstance(
-        final_result,
-        dict
-    ):
-
-        raise ValueError(
-            "TravelAgent final selection returned invalid data."
-        )
-
-    selected = final_result.get(
-        "selected_trips",
+    destinations = result.get(
+        "destinations",
         []
     )
 
-    if len(selected) != 3:
+    if not isinstance(
+        destinations,
+        list
+    ):
+
+        return []
+
+    candidates = []
+
+    for index, destination in enumerate(
+        destinations,
+        start=1
+    ):
+
+        if not isinstance(
+            destination,
+            dict
+        ):
+
+            continue
+
+        name = str(
+            destination.get(
+                "destination",
+                destination.get(
+                    "name",
+                    ""
+                )
+            )
+        ).strip()
+
+        country = str(
+            destination.get(
+                "country",
+                ""
+            )
+        ).strip()
+
+        if not name:
+
+            continue
+
+        candidates.append({
+
+            "name":
+                name,
+
+            "country":
+                country,
+
+            "description":
+                str(
+                    destination.get(
+                        "description",
+                        ""
+                    )
+                ).strip(),
+
+            "reason":
+                str(
+                    destination.get(
+                        "reason",
+                        ""
+                    )
+                ).strip(),
+
+            "research_priority":
+                destination.get(
+                    "research_priority",
+                    index
+                ),
+
+            "image":
+                destination.get(
+                    "image",
+                    {}
+                ),
+
+            "research":
+                destination.get(
+                    "research",
+                    {}
+                ),
+
+            "rank":
+                destination.get(
+                    "rank",
+                    index
+                )
+        })
+
+    if len(candidates) != 3:
 
         raise ValueError(
-            "Main Gemini must return exactly three "
-            "final trip options."
+            "TravelAgent must return exactly three "
+            f"destinations. Got {len(candidates)}."
         )
 
-    return selected
+    return candidates
 
 
 # ==============================================================
-# COMPLETE AI PIPELINE
+# COMPLETE TRAVEL ORCHESTRATION
 # ==============================================================
 
 def run_travel_orchestration(
@@ -1324,197 +731,132 @@ def run_travel_orchestration(
     budget
 ):
     """
-    COMPLETE NEW ARCHITECTURE.
+    NEW ARCHITECTURE.
 
-        USER
-          |
-          v
-      MoodAgent
-          |
-          v
-    TripRequirements
-          |
-          v
-      Main Gemini
-          |
-          v
-      5 candidates
-          |
-          v
-      Main Gemini
-          |
-          v
-      Research Plan
-          |
-          v
-    +---------------------+
-    |   Ollama Research   |
-    |                     |
-    | Worker 1            |
-    | Worker 2            |
-    | Worker 3            |
-    +---------------------+
-          |
-          v
-      Evaluator
-          |
-          v
-      Main Gemini
-          |
-          v
-       Best 3
+        User
+          ↓
+        MoodAgent
+          ↓
+        TripRequirements
+          ↓
+        TravelAgent
+          ↓
+        Gemini selects EXACTLY 3
+          ↓
+        ResearchAgent
+          ├── Worker 1 → Destination 1
+          ├── Worker 2 → Destination 2
+          └── Worker 3 → Destination 3
+          ↓
+        Gemma verification
+          ↓
+        Pexels images
+          ↓
+        TravelAgent combines everything
+          ↓
+        main.py stores the result
+
+    IMPORTANT:
+
+    main.py no longer:
+        - creates research plans
+        - creates worker questions
+        - launches workers
+        - evaluates destinations
+        - ranks destinations
+        - asks Gemini to select final trips
+        - calls Pexels directly for recommendation images
     """
 
     initialize_systems()
 
-    # ==========================================================
-    # STEP 3 — CANDIDATES
-    # ==========================================================
+    # ----------------------------------------------------------
+    # Get current budget state.
+    # ----------------------------------------------------------
 
-    (
-        candidate_result,
-        candidates
-    ) = generate_candidates(
+    budget_state = budget.get_status()
+
+    # ----------------------------------------------------------
+    # TravelAgent owns the complete recommendation pipeline.
+    # ----------------------------------------------------------
+
+    result = travel_agent.get_trip_recommendations(
 
         user_input=
             user_input,
 
-        trip_requirements=
+        preferences=
             trip_requirements,
 
-        trip_information=
-            trip_information,
-
         budget=
-            budget
-    )
+            budget_state,
 
-    # ==========================================================
-    # STEP 3B — RESEARCH PLAN
-    # ==========================================================
-
-    research_plan = (
-        travel_agent.create_research_plan(
-
-            user_input=
-                user_input,
-
-            trip_requirements=
-                trip_requirements,
-
-            candidates=
-                candidates,
-
-            trip_information=
-                trip_information
-        )
+        trip_information=
+            trip_information
     )
 
     if not isinstance(
-        research_plan,
+        result,
         dict
     ):
 
         raise ValueError(
-            "TravelAgent returned an invalid research plan."
+            "TravelAgent returned invalid recommendation data."
         )
 
-    # ==========================================================
-    # STEP 4 — OLLAMA RESEARCH
-    # ==========================================================
+    # ----------------------------------------------------------
+    # TravelAgent already returns exactly three enriched
+    # destinations.
+    # ----------------------------------------------------------
 
-    research_results = run_research_pipeline(
-
-        candidates=
-            candidates,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_plan=
-            research_plan
-    )
-    errors = research_results.get(
-        "errors",
-        []
+    candidates = extract_candidates(
+        result
     )
 
-    successful_workers = 15 - len(errors)
-
-    if successful_workers == 0:
-
-        raise RuntimeError(
-            "All research workers failed. "
-            "No valid research data is available "
-            "for final destination selection."
-        )
-
-    # ==========================================================
-    # STEP 5 — EVALUATOR
-    # ==========================================================
-
-    evaluation_results = evaluate_research(
-
-        candidates=
-            candidates,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_results=
-            research_results
-    )
-
-    # ==========================================================
-    # STEP 6 — MAIN GEMINI
-    # ==========================================================
-
-    travel_options = select_final_trips(
-
-        user_input=
-            user_input,
-
-        trip_requirements=
-            trip_requirements,
-
-        research_results=
-            research_results,
-
-        evaluation_results=
-            evaluation_results,
-
-        trip_information=
-            trip_information,
-
-        budget=
-            budget
-    )
+    # ----------------------------------------------------------
+    # Return a structure that is easy for the session state
+    # and frontend to consume.
+    # ----------------------------------------------------------
 
     return {
 
-        "candidate_result":
-            candidate_result,
+        "success":
+            result.get(
+                "success",
+                False
+            ),
+
+        "research_strategy":
+            result.get(
+                "research_strategy",
+                ""
+            ),
+
+        "candidate_result": {
+
+            "research_strategy":
+                result.get(
+                    "research_strategy",
+                    ""
+                ),
+
+            "candidates":
+                candidates
+        },
 
         "candidates":
             candidates,
 
-        "research_plan":
-            research_plan,
+        # TravelAgent's enriched destination objects are already
+        # suitable as the three frontend travel options.
+        "travel_options":
+            candidates,
 
         "research":
-            research_results,
-
-        "evaluation":
-            evaluation_results,
-
-        "ranked_candidates":
-            evaluation_results.get(
-                "candidates",
-                []
-            ),
-
-        "travel_options":
-            travel_options
+            result.get(
+                "research",
+                {}
+            )
     }
 
 
@@ -1529,7 +871,7 @@ def start_trip(
     initialize_systems()
 
     # ==========================================================
-    # STEP 1 — USER
+    # STEP 1 — VALIDATE USER REQUEST
     # ==========================================================
 
     (
@@ -1540,7 +882,7 @@ def start_trip(
     )
 
     # ==========================================================
-    # LOAD SAVED TRIP
+    # STEP 2 — LOAD BASIC TRIP INFORMATION
     # ==========================================================
 
     trip_information = get_saved_trip(
@@ -1548,7 +890,7 @@ def start_trip(
     )
 
     # ==========================================================
-    # BUDGET
+    # STEP 3 — CREATE BUDGET
     # ==========================================================
 
     budget_value = trip_information.get(
@@ -1597,7 +939,7 @@ def start_trip(
     )
 
     # ==========================================================
-    # CREATE SESSION
+    # STEP 4 — CREATE SESSION
     # ==========================================================
 
     session_id = str(
@@ -1628,7 +970,7 @@ def start_trip(
     ] = trip
 
     # ==========================================================
-    # STEP 2 — MOOD AGENT
+    # STEP 5 — MOOD AGENT
     # ==========================================================
 
     trip_requirements = (
@@ -1646,33 +988,34 @@ def start_trip(
         "trip_requirements"
     ] = trip_requirements
 
-    # Keep compatibility with existing frontend.
+    # Compatibility alias.
     trip[
         "preferences"
     ] = trip_requirements
 
     # ==========================================================
-    # STEP 3 → STEP 6
-    # COMPLETE PIPELINE
+    # STEP 6 — COMPLETE NEW AI PIPELINE
     # ==========================================================
 
-    orchestration = run_travel_orchestration(
+    orchestration = (
+        run_travel_orchestration(
 
-        user_input=
-            user_input,
+            user_input=
+                user_input,
 
-        trip_requirements=
-            trip_requirements,
+            trip_requirements=
+                trip_requirements,
 
-        trip_information=
-            trip_information,
+            trip_information=
+                trip_information,
 
-        budget=
-            budget
+            budget=
+                budget
+        )
     )
 
     # ==========================================================
-    # SAVE PIPELINE STATE
+    # STEP 7 — SAVE RESULTS
     # ==========================================================
 
     trip[
@@ -1692,14 +1035,9 @@ def start_trip(
     trip[
         "candidate_names"
     ] = destination_names(
-        trip["candidates"]
-    )
-
-    trip[
-        "research_plan"
-    ] = orchestration.get(
-        "research_plan",
-        {}
+        trip[
+            "candidates"
+        ]
     )
 
     trip[
@@ -1710,25 +1048,15 @@ def start_trip(
     )
 
     trip[
-        "evaluation"
-    ] = orchestration.get(
-        "evaluation",
-        {}
-    )
-
-    trip[
-        "ranked_candidates"
-    ] = orchestration.get(
-        "ranked_candidates",
-        []
-    )
-
-    trip[
         "travel_options"
     ] = orchestration.get(
         "travel_options",
         []
     )
+
+    # ==========================================================
+    # STEP 8 — READY FOR USER SELECTION
+    # ==========================================================
 
     trip[
         "status"
@@ -1776,7 +1104,7 @@ def get_trip_status(
         "budget"
     ]
 
-    result = {
+    return make_json_safe({
 
         "trip_id":
             trip["trip_id"],
@@ -1794,7 +1122,7 @@ def get_trip_status(
             trip["trip_information"],
 
         # ------------------------------------------------------
-        # STEP 2
+        # MOOD
         # ------------------------------------------------------
 
         "trip_requirements":
@@ -1804,7 +1132,7 @@ def get_trip_status(
             trip["preferences"],
 
         # ------------------------------------------------------
-        # STEP 3
+        # RECOMMENDATIONS
         # ------------------------------------------------------
 
         "candidate_result":
@@ -1819,31 +1147,15 @@ def get_trip_status(
                 []
             ),
 
-        "research_plan":
-            trip.get(
-                "research_plan",
-                {}
-            ),
-
         # ------------------------------------------------------
-        # STEP 4
+        # RESEARCH
         # ------------------------------------------------------
 
         "research":
             trip["research"],
 
         # ------------------------------------------------------
-        # STEP 5
-        # ------------------------------------------------------
-
-        "evaluation":
-            trip["evaluation"],
-
-        "ranked_candidates":
-            trip["ranked_candidates"],
-
-        # ------------------------------------------------------
-        # STEP 6
+        # FINAL FRONTEND OPTIONS
         # ------------------------------------------------------
 
         "travel_options":
@@ -1872,15 +1184,11 @@ def get_trip_status(
 
         "budget":
             budget.get_status()
-    }
-
-    return make_json_safe(
-        result
-    )
+    })
 
 
 # ==============================================================
-# UPDATE TRIP
+# UPDATE TRIP THROUGH CHAT
 # ==============================================================
 
 def update_trip(
@@ -1925,6 +1233,10 @@ def update_trip(
         trip_id
     )
 
+    # ----------------------------------------------------------
+    # Preserve the entire conversation/change history.
+    # ----------------------------------------------------------
+
     original_request = trip[
         "original_user_input"
     ]
@@ -1946,7 +1258,7 @@ def update_trip(
     ]
 
     # ==========================================================
-    # MOOD AGENT
+    # RE-RUN MOOD AGENT
     # ==========================================================
 
     trip_requirements = (
@@ -1961,22 +1273,24 @@ def update_trip(
     )
 
     # ==========================================================
-    # COMPLETE RE-RUN
+    # RE-RUN COMPLETE NEW PIPELINE
     # ==========================================================
 
-    orchestration = run_travel_orchestration(
+    orchestration = (
+        run_travel_orchestration(
 
-        user_input=
-            updated_request,
+            user_input=
+                updated_request,
 
-        trip_requirements=
-            trip_requirements,
+            trip_requirements=
+                trip_requirements,
 
-        trip_information=
-            trip_information,
+            trip_information=
+                trip_information,
 
-        budget=
-            budget
+            budget=
+                budget
+        )
     )
 
     # ==========================================================
@@ -2012,14 +1326,9 @@ def update_trip(
     trip[
         "candidate_names"
     ] = destination_names(
-        trip["candidates"]
-    )
-
-    trip[
-        "research_plan"
-    ] = orchestration.get(
-        "research_plan",
-        {}
+        trip[
+            "candidates"
+        ]
     )
 
     trip[
@@ -2030,27 +1339,15 @@ def update_trip(
     )
 
     trip[
-        "evaluation"
-    ] = orchestration.get(
-        "evaluation",
-        {}
-    )
-
-    trip[
-        "ranked_candidates"
-    ] = orchestration.get(
-        "ranked_candidates",
-        []
-    )
-
-    trip[
         "travel_options"
     ] = orchestration.get(
         "travel_options",
         []
     )
 
-    # Clear previous selection.
+    # ----------------------------------------------------------
+    # Clear old selection.
+    # ----------------------------------------------------------
 
     trip[
         "selected_destination"
@@ -2107,12 +1404,16 @@ def get_selected_destination_map_data(
             query
         )
 
-        if isinstance(
-            result,
-            dict
-        ) and result.get(
-            "found",
-            False
+        if (
+            isinstance(
+                result,
+                dict
+            )
+            and
+            result.get(
+                "found",
+                False
+            )
         ):
 
             return [
@@ -2130,7 +1431,7 @@ def get_selected_destination_map_data(
 
 
 # ==============================================================
-# SELECT FINAL TRIP
+# SELECT TRIP
 # ==============================================================
 
 def select_trip(
@@ -2172,7 +1473,7 @@ def select_trip(
     if not travel_options:
 
         raise ValueError(
-            "No final trip options are available."
+            "No travel options are available."
         )
 
     # ==========================================================
@@ -2226,6 +1527,10 @@ def select_trip(
 
         selected_option = None
 
+        requested_destination = str(
+            selected_destination or ""
+        ).strip().lower()
+
         for option in travel_options:
 
             if not isinstance(
@@ -2242,10 +1547,6 @@ def select_trip(
                 )
             ).strip().lower()
 
-            requested_destination = str(
-                selected_destination or ""
-            ).strip().lower()
-
             if (
                 option_destination
                 ==
@@ -2260,7 +1561,7 @@ def select_trip(
 
             raise ValueError(
                 "Selected destination is not one of the "
-                "final trip options."
+                "three travel options."
             )
 
     if not selected_destination:
@@ -2303,7 +1604,7 @@ def select_trip(
             break
 
     # ==========================================================
-    # MAP SERVICE
+    # MAP
     # ==========================================================
 
     map_data = get_selected_destination_map_data(
@@ -2320,7 +1621,30 @@ def select_trip(
     ] = map_data
 
     # ==========================================================
-    # BUILD DETAILED TRIP
+    # GET THE RESEARCH FOR THE SELECTED DESTINATION
+    # ==========================================================
+
+    selected_research = {}
+
+    if isinstance(
+        selected_option,
+        dict
+    ):
+
+        selected_research = selected_option.get(
+            "research",
+            {}
+        )
+
+    if not isinstance(
+        selected_research,
+        dict
+    ):
+
+        selected_research = {}
+
+    # ==========================================================
+    # BUILD DETAILED SELECTED TRIP
     # ==========================================================
 
     detailed_trip = travel_agent.build_selected_trip(
@@ -2344,9 +1668,7 @@ def select_trip(
             ].get_status(),
 
         research=
-            trip[
-                "research"
-            ],
+            selected_research,
 
         map_data=
             map_data,
@@ -2366,9 +1688,9 @@ def select_trip(
             "TravelAgent returned invalid selected-trip data."
         )
 
-    # ==========================================================
-    # SAVE
-    # ==========================================================
+    # ----------------------------------------------------------
+    # Preserve which option the user selected.
+    # ----------------------------------------------------------
 
     trip[
         "selected_destination"
@@ -2376,11 +1698,18 @@ def select_trip(
 
     trip[
         "selected_trip"
-    ] = detailed_trip
+    ] = {
+
+        "option":
+            selected_option,
+
+        "details":
+            detailed_trip
+    }
 
     trip[
         "status"
-    ] = "awaiting_confirmation"
+    ] = "selected"
 
     return get_trip_status({
 
@@ -2414,19 +1743,13 @@ def confirm_trip(
         trip_id
     )
 
-    if trip.get(
+    if not trip.get(
         "selected_trip"
-    ) is None:
+    ):
 
         raise ValueError(
             "No trip has been selected."
         )
-
-    budget = trip[
-        "budget"
-    ]
-
-    budget.confirm_estimates()
 
     trip[
         "status"
@@ -2465,12 +1788,20 @@ def cancel_trip(
     )
 
     trip[
-        "budget"
-    ].clear_estimates()
-
-    trip[
         "status"
     ] = "cancelled"
+
+    trip[
+        "selected_destination"
+    ] = None
+
+    trip[
+        "selected_trip"
+    ] = None
+
+    trip[
+        "map_data"
+    ] = []
 
     return get_trip_status({
 
@@ -2499,12 +1830,6 @@ def delete_trip(
     trip_id = trip_data.get(
         "trip_id"
     )
-
-    if trip_id is None:
-
-        raise ValueError(
-            "trip_id is required."
-        )
 
     try:
 
@@ -2659,13 +1984,13 @@ def search_destination(
         query
     )
 
-    query = search_request[
+    normalized_query = search_request[
         "query"
     ]
 
     database_results = (
         database.search_destinations(
-            query
+            normalized_query
         )
     )
 
@@ -2717,7 +2042,7 @@ def search_destination(
         return search_destinations(
 
             query=
-                query,
+                normalized_query,
 
             database_results=
                 [destination]
@@ -2729,7 +2054,7 @@ def search_destination(
 
     live_result = (
         map_service.get_destination_info(
-            query
+            normalized_query
         )
     )
 
@@ -2741,7 +2066,7 @@ def search_destination(
         return search_destinations(
 
             query=
-                query,
+                normalized_query,
 
             database_results=
                 [],
@@ -2774,7 +2099,7 @@ def search_destination(
     return search_destinations(
 
         query=
-            query,
+            normalized_query,
 
         database_results=
             [],
@@ -2794,16 +2119,13 @@ def search_destination(
 def main():
 
     print("=" * 60)
-    print("AI TRAVEL PLANNER BACKEND")
+    print("WANDERLUST AI TRAVEL PLANNER BACKEND")
     print("=" * 60)
 
-    print(
-        "\nStart the web application with:"
-    )
-
-    print(
-        "\n    python app.py"
-    )
+    print()
+    print("Start the web application with:")
+    print()
+    print("    python app.py")
 
 
 if __name__ == "__main__":

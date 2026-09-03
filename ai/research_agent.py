@@ -1,19 +1,14 @@
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from ollama import Client
-
-# ai/research_agent.py
-
-import json
 import os
-import re
-import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-import ollama
+from ollama import Client
+
+from workers.worker_agent1 import WorkerAgent1
+from workers.worker_agent2 import WorkerAgent2
+from workers.worker_agent3 import WorkerAgent3
 
 
 load_dotenv()
@@ -21,354 +16,403 @@ load_dotenv()
 
 class ResearchAgent:
     """
-    Ollama-powered research system.
+    WANDERLUST RESEARCH SUPERVISOR
 
-    This agent is designed for the new TravelAgent architecture:
+    Architecture
+    ------------
 
-        Gemini / TravelAgent
-                |
-                | destination + research questions
-                v
+        TravelAgent
+             |
+             | exactly 3 destinations
+             v
         ResearchAgent
-                |
-        +-------+-------+
-        |       |       |
-      Worker1 Worker2 Worker3
-        |       |       |
-        v       v       v
-      Facts   Travel   Costs
-        |       |       |
-        +-------+-------+
-                |
-                v
-        Structured research
-                |
-                v
-        Gemini / TravelAgent
+             |
+        +----+----+----+
+        |    |    |
+        v    v    v
+       W1   W2   W3
+        |    |    |
+       D1   D2   D3
+        |    |    |
+        +----+----+
+             |
+             v
+       Gemma verification
+             |
+             v
+       verified research
 
-    Worker 1:
-        Destination facts, attractions, culture, activities,
-        suitability and practical destination information.
+    IMPORTANT
+    ---------
 
-    Worker 2:
-        Transportation, travel time, logistics, weather,
-        local transportation and accessibility.
+    Worker 1 receives ONLY destination 1.
+    Worker 2 receives ONLY destination 2.
+    Worker 3 receives ONLY destination 3.
 
-    Worker 3:
-        Costs, accommodation, food, activities,
-        affordability and budget estimates.
+    ResearchAgent does NOT:
+        - select destinations
+        - rank destinations
+        - choose a winner
+        - create an itinerary
+        - call workers directly from TravelAgent
+
+    Gemma is ONLY a quality-control verifier.
+
+    Gemma does NOT:
+        - perform research
+        - rewrite worker reports
+        - rank destinations
+        - select destinations
+        - create itineraries
     """
+
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def __init__(
         self,
         ollama_host: Optional[str] = None,
-        worker1_model: Optional[str] = None,
-        worker2_model: Optional[str] = None,
-        worker3_model: Optional[str] = None,
-        max_concurrency: Optional[int] = None,
+        research_model: Optional[str] = None,
     ):
+        load_dotenv()
+
         self.ollama_host = (
             ollama_host
             or os.getenv("OLLAMA_HOST")
             or "http://localhost:11434"
         )
 
-        self.worker1_model = (
-            worker1_model
-            or os.getenv("OLLAMA_WORKER1_MODEL")
+        self.research_model = (
+            research_model
+            or os.getenv("OLLAMA_RESEARCH_MODEL")
             or os.getenv("OLLAMA_MODEL")
             or "gemma4:26b"
         )
 
-        self.worker2_model = (
-            worker2_model
-            or os.getenv("OLLAMA_WORKER2_MODEL")
-            or os.getenv("OLLAMA_MODEL")
-            or "gemma4:26b"
+        # ------------------------------------------------------
+        # Gemma performance settings
+        # ------------------------------------------------------
+
+        self.verification_enabled = (
+            os.getenv(
+                "OLLAMA_VERIFICATION_ENABLED",
+                "true"
+            ).lower()
+            not in {"false", "0", "no", "off"}
         )
 
-        self.worker3_model = (
-            worker3_model
-            or os.getenv("OLLAMA_WORKER3_MODEL")
-            or os.getenv("OLLAMA_MODEL")
-            or "gemma4:26b"
+        self.verification_max_chars = int(
+            os.getenv(
+                "OLLAMA_VERIFICATION_MAX_CHARS",
+                "18000"
+            )
         )
 
-        self.max_concurrency = int(
-            max_concurrency
-            or os.getenv("OLLAMA_RESEARCH_MAX_CONCURRENCY", "6")
+        self.verification_num_predict = int(
+            os.getenv(
+                "OLLAMA_VERIFICATION_NUM_PREDICT",
+                "300"
+            )
         )
 
-        self.client = ollama.Client(host=self.ollama_host)
+        self.verification_timeout = float(
+            os.getenv(
+                "OLLAMA_VERIFICATION_TIMEOUT",
+                "180"
+            )
+        )
 
-        self.worker_models = {
-            "worker_1": self.worker1_model,
-            "worker_2": self.worker2_model,
-            "worker_3": self.worker3_model,
-        }
+        # ------------------------------------------------------
+        # Ollama client
+        # ------------------------------------------------------
 
-    # ============================================================
-    # PUBLIC API
-    # ============================================================
+        try:
+            self.client = Client(
+                host=self.ollama_host,
+                timeout=self.verification_timeout,
+            )
+        except TypeError:
+            # Compatibility with older Ollama Python clients.
+            self.client = Client(
+                host=self.ollama_host
+            )
+
+        # ------------------------------------------------------
+        # Workers
+        # ------------------------------------------------------
+
+        self.worker1 = WorkerAgent1()
+        self.worker2 = WorkerAgent2()
+        self.worker3 = WorkerAgent3()
+
+        # Exactly 3 workers.
+        self.max_workers = 3
+
+    # ==========================================================
+    # MAIN RESEARCH FUNCTION
+    # ==========================================================
 
     def research(
         self,
-        destination: Any,
-        preferences: Optional[Dict[str, Any]] = None,
-        budget: Optional[Dict[str, Any]] = None,
-        map_data: Optional[Any] = None,
-        research_questions: Optional[Dict[str, Any]] = None,
-        trip_requirements: Optional[Dict[str, Any]] = None,
+        destinations,
+        trip_requirements=None,
     ) -> Dict[str, Any]:
         """
-        Compatibility method.
+        Research exactly three destinations.
 
-        Can research one destination or a list of destinations.
+        Returns:
 
-        This method is useful for older code.
-
-        For the NEW architecture, prefer:
-
-            research_worker(...)
-
-        or use TravelAgent.research_candidates().
-        """
-
-        if isinstance(destination, list):
-            destinations = destination
-        else:
-            destinations = [destination]
-
-        requirements = trip_requirements or {}
-
-        if preferences:
-            requirements = {
-                **requirements,
-                "preferences": preferences,
-            }
-
-        if budget:
-            requirements = {
-                **requirements,
-                "budget": budget,
-            }
-
-        results = {}
-
-        with ThreadPoolExecutor(
-            max_workers=min(self.max_concurrency, len(destinations))
-        ) as executor:
-
-            futures = {}
-
-            for item in destinations:
-                if isinstance(item, dict):
-                    name = item.get("name") or item.get("destination")
-                    country = item.get("country", "")
-                else:
-                    name = str(item)
-                    country = ""
-
-                futures[
-                    executor.submit(
-                        self.research_destination,
-                        destination=name,
-                        country=country,
-                        trip_requirements=requirements,
-                        research_questions=research_questions,
-                    )
-                ] = name
-
-            for future in as_completed(futures):
-                name = futures[future]
-
-                try:
-                    results[name] = future.result()
-                except Exception as exc:
-                    results[name] = {
-                        "success": False,
-                        "destination": name,
-                        "error": str(exc),
-                    }
-
-        return results
-
-    def research_destination(
-        self,
-        destination: str,
-        country: str = "",
-        trip_requirements: Optional[Dict[str, Any]] = None,
-        research_questions: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        """
-        Compatibility wrapper for researching a destination.
-
-        IMPORTANT:
-        This does not use one generic Ollama prompt.
-
-        It executes all three specialized Ollama workers.
-        """
-
-        requirements = trip_requirements or {}
-
-        results = {}
-
-        worker_calls = {
-            "worker_1": (
-                self._worker_1_destination,
-                self.worker1_model,
-            ),
-            "worker_2": (
-                self._worker_2_transport,
-                self.worker2_model,
-            ),
-            "worker_3": (
-                self._worker_3_budget,
-                self.worker3_model,
-            ),
+        {
+            "success": true,
+            "destinations": {
+                "destination_1": {
+                    ...worker 1 research...
+                },
+                "destination_2": {
+                    ...worker 2 research...
+                },
+                "destination_3": {
+                    ...worker 3 research...
+                }
+            },
+            "workers": {
+                "worker_1": {...},
+                "worker_2": {...},
+                "worker_3": {...}
+            },
+            "verification": {...},
+            "errors": []
         }
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-
-            futures = {}
-
-            for worker_name, (function, model) in worker_calls.items():
-
-                worker_questions = self._get_worker_questions(
-                    research_questions,
-                    worker_name,
-                    destination,
-                )
-
-                futures[
-                    executor.submit(
-                        function,
-                        destination,
-                        country,
-                        requirements,
-                        worker_questions,
-                    )
-                ] = worker_name
-
-            for future in as_completed(futures):
-                worker_name = futures[future]
-
-                try:
-                    results[worker_name] = future.result()
-                except Exception as exc:
-                    results[worker_name] = {
-                        "success": False,
-                        "worker": worker_name,
-                        "destination": destination,
-                        "error": str(exc),
-                    }
-
-        return {
-            "success": True,
-            "destination": destination,
-            "country": country,
-            "workers": results,
-        }
-
-    # ============================================================
-    # NEW ARCHITECTURE API
-    # ============================================================
-
-    def research_worker(
-        self,
-        worker: str,
-        destination: str,
-        country: str = "",
-        trip_requirements: Optional[Dict[str, Any]] = None,
-        research_questions: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Run one specialized Ollama worker.
-
-        worker:
-            worker_1
-            worker_2
-            worker_3
         """
 
-        requirements = trip_requirements or {}
-        questions = research_questions or []
-
-        if worker == "worker_1":
-            return self._worker_1_destination(
-                destination,
-                country,
-                requirements,
-                questions,
-            )
-
-        if worker == "worker_2":
-            return self._worker_2_transport(
-                destination,
-                country,
-                requirements,
-                questions,
-            )
-
-        if worker == "worker_3":
-            return self._worker_3_budget(
-                destination,
-                country,
-                requirements,
-                questions,
-            )
-
-        raise ValueError(
-            f"Unknown research worker: {worker}"
+        normalized = self._normalize_destinations(
+            destinations
         )
 
-    def research_all_workers(
-        self,
-        destination: str,
-        country: str = "",
-        trip_requirements: Optional[Dict[str, Any]] = None,
-        research_plan: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Run Worker 1, Worker 2 and Worker 3 simultaneously.
-        """
+        requirements = (
+            trip_requirements
+            if isinstance(trip_requirements, dict)
+            else {}
+        )
 
-        requirements = trip_requirements or {}
+        d1 = normalized[0]
+        d2 = normalized[1]
+        d3 = normalized[2]
 
-        jobs = []
+        print()
+        print("=" * 70)
+        print("WANDERLUST RESEARCH AGENT")
+        print("=" * 70)
+
+        print(
+            f"Worker 1 → {d1['name']}, {d1['country']}"
+        )
+        print(
+            f"Worker 2 → {d2['name']}, {d2['country']}"
+        )
+        print(
+            f"Worker 3 → {d3['name']}, {d3['country']}"
+        )
+
+        print("=" * 70)
+        print()
+
+        # ------------------------------------------------------
+        # Run all three workers concurrently.
+        # ------------------------------------------------------
+
+        workers = self._run_workers(
+            d1,
+            d2,
+            d3,
+            requirements
+        )
+
+        print()
+        print("[ResearchAgent] All workers completed.")
+
+        # ------------------------------------------------------
+        # Gemma verification
+        # ------------------------------------------------------
+
+        if self.verification_enabled:
+            print(
+                "[ResearchAgent] Starting lightweight "
+                "Gemma verification..."
+            )
+
+            verification = self._verify_worker_results(
+                destinations=normalized,
+                trip_requirements=requirements,
+                worker_results=workers,
+            )
+        else:
+            print(
+                "[ResearchAgent] Gemma verification disabled."
+            )
+
+            verification = {
+                "verification_enabled": False,
+                "verification_success": True,
+                "status": "skipped",
+                "overall_notes": (
+                    "Gemma verification disabled."
+                ),
+                "workers": {},
+                "cross_worker_issues": [],
+                "live_verification_required": [],
+            }
+
+        # ------------------------------------------------------
+        # Worker errors
+        # ------------------------------------------------------
+
+        errors = []
 
         for worker_name in (
             "worker_1",
             "worker_2",
             "worker_3",
         ):
-            questions = self._get_worker_questions(
-                research_plan,
-                worker_name,
-                destination,
-            )
+            result = workers.get(worker_name, {})
 
-            jobs.append(
-                (
-                    worker_name,
-                    questions,
-                )
-            )
+            if not result.get("success", True):
+                errors.append({
+                    "worker": worker_name,
+                    "destination": result.get(
+                        "destination"
+                    ),
+                    "error": result.get(
+                        "error",
+                        "Unknown worker error."
+                    )
+                })
+
+        # ------------------------------------------------------
+        # IMPORTANT:
+        #
+        # Gemma verification failure does NOT erase valid
+        # worker research.
+        #
+        # This is intentional.
+        # ------------------------------------------------------
+
+        workers_successful = (
+            len(errors) == 0
+        )
+
+        return {
+            "success": workers_successful,
+
+            "destinations": {
+                "destination_1": workers.get(
+                    "worker_1",
+                    {}
+                ),
+                "destination_2": workers.get(
+                    "worker_2",
+                    {}
+                ),
+                "destination_3": workers.get(
+                    "worker_3",
+                    {}
+                ),
+            },
+
+            "workers": workers,
+
+            "verification": verification,
+
+            "errors": errors,
+        }
+
+    # ==========================================================
+    # RUN WORKERS
+    # ==========================================================
+
+    def _run_workers(
+        self,
+        destination_1,
+        destination_2,
+        destination_3,
+        trip_requirements,
+    ):
+        """
+        Run Worker 1, Worker 2 and Worker 3 concurrently.
+
+        Each worker gets exactly ONE destination.
+        """
 
         results = {}
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        def run_worker_1():
+            print(
+                f"[ResearchAgent] Starting Worker 1 → "
+                f"{destination_1['name']}"
+            )
+
+            result = self.worker1.research(
+                destination=destination_1["name"],
+                country=destination_1["country"],
+                trip_requirements=trip_requirements,
+            )
+
+            return self._normalize_worker_result(
+                result,
+                "worker_1",
+                destination_1
+            )
+
+        def run_worker_2():
+            print(
+                f"[ResearchAgent] Starting Worker 2 → "
+                f"{destination_2['name']}"
+            )
+
+            result = self.worker2.research(
+                destination=destination_2["name"],
+                country=destination_2["country"],
+                trip_requirements=trip_requirements,
+            )
+
+            return self._normalize_worker_result(
+                result,
+                "worker_2",
+                destination_2
+            )
+
+        def run_worker_3():
+            print(
+                f"[ResearchAgent] Starting Worker 3 → "
+                f"{destination_3['name']}"
+            )
+
+            result = self.worker3.research(
+                destination=destination_3["name"],
+                country=destination_3["country"],
+                trip_requirements=trip_requirements,
+            )
+
+            return self._normalize_worker_result(
+                result,
+                "worker_3",
+                destination_3
+            )
+
+        functions = {
+            "worker_1": run_worker_1,
+            "worker_2": run_worker_2,
+            "worker_3": run_worker_3,
+        }
+
+        with ThreadPoolExecutor(
+            max_workers=3
+        ) as executor:
 
             futures = {
-                executor.submit(
-                    self.research_worker,
-                    worker_name,
-                    destination,
-                    country,
-                    requirements,
-                    questions,
-                ): worker_name
-                for worker_name, questions in jobs
+                executor.submit(function): name
+                for name, function in functions.items()
             }
 
             for future in as_completed(futures):
@@ -376,310 +420,242 @@ class ResearchAgent:
                 worker_name = futures[future]
 
                 try:
-                    results[worker_name] = future.result()
+                    result = future.result()
 
-                except Exception as exc:
+                    results[worker_name] = result
+
+                    print(
+                        f"[ResearchAgent] "
+                        f"{worker_name} completed."
+                    )
+
+                except Exception as error:
+
+                    destination = {
+                        "worker_1": destination_1,
+                        "worker_2": destination_2,
+                        "worker_3": destination_3,
+                    }[worker_name]
 
                     results[worker_name] = {
-                        "success": False,
                         "worker": worker_name,
-                        "destination": destination,
-                        "error": str(exc),
+                        "destination": destination["name"],
+                        "country": destination["country"],
+                        "success": False,
+                        "error": str(error),
                     }
+
+                    print(
+                        f"[ResearchAgent] "
+                        f"{worker_name} FAILED: {error}"
+                    )
+
+        # Ensure all three keys exist.
+        for worker_name in (
+            "worker_1",
+            "worker_2",
+            "worker_3",
+        ):
+            results.setdefault(
+                worker_name,
+                {
+                    "worker": worker_name,
+                    "success": False,
+                    "error": "Worker returned no result."
+                }
+            )
 
         return results
 
-    # ============================================================
-    # WORKER 1
-    # ============================================================
+    # ==========================================================
+    # NORMALIZE WORKER RESULT
+    # ==========================================================
 
-    def _worker_1_destination(
+    @staticmethod
+    def _normalize_worker_result(
+        result,
+        worker_name,
+        destination
+    ):
+        """
+        Make worker output consistent regardless of minor
+        differences in worker implementation.
+        """
+
+        if isinstance(result, dict):
+
+            normalized = dict(result)
+
+        else:
+
+            normalized = {
+                "data": result
+            }
+
+        normalized.setdefault(
+            "worker",
+            worker_name
+        )
+
+        normalized.setdefault(
+            "destination",
+            destination["name"]
+        )
+
+        normalized.setdefault(
+            "country",
+            destination["country"]
+        )
+
+        normalized.setdefault(
+            "success",
+            True
+        )
+
+        return normalized
+
+    # ==========================================================
+    # LIGHTWEIGHT GEMMA VERIFICATION
+    # ==========================================================
+
+    def _verify_worker_results(
         self,
-        destination: str,
-        country: str,
-        trip_requirements: Dict[str, Any],
-        questions: List[str],
-    ) -> Dict[str, Any]:
+        destinations,
+        trip_requirements,
+        worker_results,
+    ):
+        """
+        Lightweight quality-control pass.
+
+        IMPORTANT PERFORMANCE CHANGE:
+
+        Gemma does NOT receive the entire raw worker reports
+        with unlimited context.
+
+        The reports are compacted and truncated to a reasonable
+        size.
+
+        Gemma also has a very small output budget.
+
+        This makes verification much faster.
+        """
+
+        compact_workers = {}
+
+        for worker_name in (
+            "worker_1",
+            "worker_2",
+            "worker_3",
+        ):
+
+            compact_workers[worker_name] = (
+                self._compact_for_verification(
+                    worker_results.get(
+                        worker_name,
+                        {}
+                    ),
+                    self.verification_max_chars // 3
+                )
+            )
+
+        assignments = {
+            "worker_1": {
+                "destination": destinations[0]["name"],
+                "country": destinations[0]["country"],
+            },
+            "worker_2": {
+                "destination": destinations[1]["name"],
+                "country": destinations[1]["country"],
+            },
+            "worker_3": {
+                "destination": destinations[2]["name"],
+                "country": destinations[2]["country"],
+            },
+        }
+
+        # ------------------------------------------------------
+        # Very short system prompt.
+        # ------------------------------------------------------
 
         system_prompt = """
-You are Worker 1 of a travel research system.
+You are a strict quality-control verifier.
 
-Your ONLY responsibility is destination knowledge.
+Check three travel research reports.
 
-Research and reason about:
+Do NOT research.
+Do NOT rewrite reports.
+Do NOT rank destinations.
+Do NOT choose a destination.
+Do NOT create an itinerary.
 
-- major attractions
-- interesting places
-- activities
-- culture
-- food culture
-- nature
-- nightlife
-- entertainment
-- family friendliness
-- solo travel suitability
-- couples suitability
-- general atmosphere
-- accessibility
-- destination strengths
-- destination weaknesses
-- suitability for the user's stated preferences
+Only identify obvious problems.
 
-Do NOT focus on:
-- flight prices
-- hotel prices
-- detailed transportation costs
-- detailed budget calculations
-- booking anything
-
-You are NOT the final travel decision maker.
-
-You provide evidence and analysis to another AI.
-
-IMPORTANT:
-
-Do not invent precise facts.
-
-If you are uncertain, explicitly mark the information as uncertain.
+Check:
+- destination mismatch
+- assignment violation
+- major contradiction
+- obvious factual problem
+- missing critical information
+- suspicious unsupported claims
 
 Return ONLY valid JSON.
 """
 
-        user_prompt = self._build_worker_prompt(
-            destination=destination,
-            country=country,
-            requirements=trip_requirements,
-            questions=questions,
-            worker_role="destination information",
+        user_prompt = (
+            "ASSIGNMENTS:\n"
+            + json.dumps(
+                assignments,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n\nRESEARCH:\n"
+            + json.dumps(
+                compact_workers,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+            + "\n\nReturn exactly this structure:\n"
+            + json.dumps(
+                {
+                    "verification_success": True,
+                    "overall_notes": "",
+                    "workers": {
+                        "worker_1": {
+                            "destination_correct": True,
+                            "assignment_boundary_respected": True,
+                            "quality": "good",
+                            "issues": [],
+                            "warnings": [],
+                        },
+                        "worker_2": {
+                            "destination_correct": True,
+                            "assignment_boundary_respected": True,
+                            "quality": "good",
+                            "issues": [],
+                            "warnings": [],
+                        },
+                        "worker_3": {
+                            "destination_correct": True,
+                            "assignment_boundary_respected": True,
+                            "quality": "good",
+                            "issues": [],
+                            "warnings": [],
+                        },
+                    },
+                    "cross_worker_issues": [],
+                    "live_verification_required": [],
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         )
-
-        schema = {
-            "worker": "worker_1",
-            "destination": destination,
-            "country": country,
-            "summary": "",
-            "attractions": [],
-            "activities": [],
-            "culture": [],
-            "food": [],
-            "nature": [],
-            "nightlife": [],
-            "suitability": {},
-            "strengths": [],
-            "limitations": [],
-            "evidence": [],
-            "uncertainties": [],
-        }
-
-        return self._run_ollama_worker(
-            model=self.worker1_model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            worker_name="worker_1",
-            destination=destination,
-            fallback_schema=schema,
-        )
-
-    # ============================================================
-    # WORKER 2
-    # ============================================================
-
-    def _worker_2_transport(
-        self,
-        destination: str,
-        country: str,
-        trip_requirements: Dict[str, Any],
-        questions: List[str],
-    ) -> Dict[str, Any]:
-
-        system_prompt = """
-You are Worker 2 of a travel research system.
-
-Your ONLY responsibility is travel logistics.
-
-Research and reason about:
-
-- approximate flight/travel time
-- typical routes
-- airports
-- airport-to-city logistics
-- trains
-- buses
-- local public transportation
-- taxis/rideshare
-- walking practicality
-- transportation convenience
-- travel effort
-- weather
-- seasonal conditions
-- likely weather during the requested travel period
-- weather risks
-- accessibility
-- jet lag considerations
-- realistic transportation difficulties
-
-Do NOT make the final destination decision.
-
-Do NOT focus heavily on:
-- attractions
-- culture
-- hotel prices
-- food prices
-
-You provide evidence and analysis to another AI.
-
-IMPORTANT:
-
-Do not invent live schedules.
-
-Do not pretend that a current flight or train is confirmed.
-
-Clearly distinguish:
-- generally known information
-- estimates
-- information that requires live verification
-
-Return ONLY valid JSON.
-"""
-
-        user_prompt = self._build_worker_prompt(
-            destination=destination,
-            country=country,
-            requirements=trip_requirements,
-            questions=questions,
-            worker_role="transportation, logistics and weather",
-        )
-
-        schema = {
-            "worker": "worker_2",
-            "destination": destination,
-            "country": country,
-            "travel_time": {},
-            "airports": [],
-            "international_transport": [],
-            "local_transport": [],
-            "weather": {},
-            "seasonal_conditions": [],
-            "logistics": [],
-            "accessibility": [],
-            "travel_effort": {},
-            "risks": [],
-            "evidence": [],
-            "uncertainties": [],
-        }
-
-        return self._run_ollama_worker(
-            model=self.worker2_model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            worker_name="worker_2",
-            destination=destination,
-            fallback_schema=schema,
-        )
-
-    # ============================================================
-    # WORKER 3
-    # ============================================================
-
-    def _worker_3_budget(
-        self,
-        destination: str,
-        country: str,
-        trip_requirements: Dict[str, Any],
-        questions: List[str],
-    ) -> Dict[str, Any]:
-
-        system_prompt = """
-You are Worker 3 of a travel research system.
-
-Your ONLY responsibility is travel costs and affordability.
-
-Analyze:
-
-- accommodation
-- food
-- local transportation
-- attractions
-- activities
-- estimated daily spending
-- estimated trip spending
-- budget friendliness
-- expensive areas
-- inexpensive alternatives
-- major hidden costs
-- currency considerations
-- whether the destination appears compatible with the user's budget
-
-Separate:
-
-1. Known/general price ranges
-2. Estimates
-3. Information requiring live verification
-
-Do NOT make the final destination decision.
-
-Do NOT invent exact current prices.
-
-If the user has not supplied a complete budget,
-make reasonable estimates but clearly label them.
-
-Return ONLY valid JSON.
-"""
-
-        user_prompt = self._build_worker_prompt(
-            destination=destination,
-            country=country,
-            requirements=trip_requirements,
-            questions=questions,
-            worker_role="cost, budget and affordability research",
-        )
-
-        schema = {
-            "worker": "worker_3",
-            "destination": destination,
-            "country": country,
-            "currency": "",
-            "accommodation": {},
-            "food": {},
-            "transportation": {},
-            "activities": {},
-            "daily_cost": {},
-            "trip_cost": {},
-            "budget_fit": {},
-            "expensive_items": [],
-            "budget_alternatives": [],
-            "hidden_costs": [],
-            "evidence": [],
-            "uncertainties": [],
-        }
-
-        return self._run_ollama_worker(
-            model=self.worker3_model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            worker_name="worker_3",
-            destination=destination,
-            fallback_schema=schema,
-        )
-
-    # ============================================================
-    # OLLAMA ENGINE
-    # ============================================================
-
-    def _run_ollama_worker(
-        self,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
-        worker_name: str,
-        destination: str,
-        fallback_schema: Dict[str, Any],
-    ) -> Dict[str, Any]:
 
         try:
 
             response = self.client.chat(
-                model=model,
+                model=self.research_model,
+
                 messages=[
                     {
                         "role": "system",
@@ -690,362 +666,612 @@ Return ONLY valid JSON.
                         "content": user_prompt,
                     },
                 ],
+
+                # --------------------------------------------------
+                # FORCE JSON.
+                # --------------------------------------------------
+
+                format="json",
+
                 options={
-                    "temperature": 0.2,
+                    "temperature": 0,
+                    "num_predict": self.verification_num_predict,
                 },
             )
 
-            content = self._extract_ollama_content(response)
+            content = self._extract_ollama_content(
+                response
+            )
 
             if not content:
-                raise RuntimeError(
-                    f"Ollama returned an empty response for {worker_name}"
-                )
-
-            parsed = self._parse_json(content)
-
-            if not isinstance(parsed, dict):
                 raise ValueError(
-                    f"Ollama response for {worker_name} was not a JSON object"
+                    "Gemma returned an empty response."
                 )
 
-            parsed.setdefault("worker", worker_name)
-            parsed.setdefault("destination", destination)
-            parsed["model"] = model
-            parsed["success"] = True
+            verification = self._parse_json(
+                content
+            )
 
-            return parsed
+            if not isinstance(
+                verification,
+                dict
+            ):
+                raise ValueError(
+                    "Gemma did not return a JSON object."
+                )
 
-        except Exception as exc:
+            verification.setdefault(
+                "verification_success",
+                True
+            )
+
+            verification.setdefault(
+                "overall_notes",
+                ""
+            )
+
+            verification.setdefault(
+                "workers",
+                {}
+            )
+
+            verification.setdefault(
+                "cross_worker_issues",
+                []
+            )
+
+            verification.setdefault(
+                "live_verification_required",
+                []
+            )
+
+            verification["status"] = "completed"
 
             print(
-                f"[ResearchAgent] {worker_name} failed "
-                f"for {destination}: {exc}"
+                "[ResearchAgent] "
+                "Gemma verification completed."
             )
+
+            return verification
+
+        except Exception as error:
+
+            print(
+                "[ResearchAgent] "
+                f"Gemma verification FAILED: {error}"
+            )
+
+            # --------------------------------------------------
+            # CRITICAL:
+            #
+            # Worker research remains valid.
+            #
+            # Verification simply becomes unavailable.
+            # --------------------------------------------------
 
             return {
-                **fallback_schema,
-                "worker": worker_name,
-                "destination": destination,
-                "model": model,
-                "success": False,
-                "error": str(exc),
+                "verification_success": False,
+                "status": "failed",
+                "overall_notes": (
+                    "Gemma verification failed. "
+                    "Worker research was preserved."
+                ),
+                "workers": {},
+                "cross_worker_issues": [],
+                "live_verification_required": [],
+                "error": str(error),
             }
 
-    # ============================================================
-    # PROMPT BUILDING
-    # ============================================================
+    # ==========================================================
+    # COMPACT DATA FOR GEMMA
+    # ==========================================================
 
-    def _build_worker_prompt(
-        self,
-        destination: str,
-        country: str,
-        requirements: Dict[str, Any],
-        questions: List[str],
-        worker_role: str,
-    ) -> str:
+    @classmethod
+    def _compact_for_verification(
+        cls,
+        value,
+        max_chars
+    ):
+        """
+        Reduce a potentially huge worker result before sending
+        it to Gemma.
 
-        requirements_json = json.dumps(
-            requirements,
-            indent=2,
-            ensure_ascii=False,
-            default=str,
-        )
+        This is one of the main performance improvements.
+        """
 
-        questions_text = "\n".join(
-            f"- {question}"
-            for question in questions
-        )
+        if isinstance(value, dict):
 
-        if not questions_text:
-            questions_text = "- Perform the most important research for your assigned role."
+            compact = {}
 
-        return f"""
-Destination:
-{destination}
+            for key, item in value.items():
 
-Country:
-{country}
+                # Skip huge metadata fields.
+                if key.lower() in {
+                    "raw_response",
+                    "full_response",
+                    "prompt",
+                    "messages",
+                    "debug",
+                    "trace",
+                }:
+                    continue
 
-Your research role:
-{worker_role}
+                compact[key] = cls._compact_value(
+                    item,
+                    depth=0
+                )
 
-USER TRIP REQUIREMENTS:
-{requirements_json}
-
-SPECIFIC RESEARCH QUESTIONS:
-{questions_text}
-
-Instructions:
-
-1. Analyze the destination specifically for the user's requirements.
-2. Answer the research questions.
-3. Prioritize useful information over generic travel descriptions.
-4. Clearly identify estimates and uncertainty.
-5. Do not make the final destination selection.
-6. Return structured JSON.
-"""
-
-    # ============================================================
-    # QUESTION EXTRACTION
-    # ============================================================
-
-    def _get_worker_questions(
-        self,
-        research_plan: Optional[Dict[str, Any]],
-        worker_name: str,
-        destination: str,
-    ) -> List[str]:
-
-        if not research_plan:
-            return []
-
-        if not isinstance(research_plan, dict):
-            return []
-
-        worker_questions = research_plan.get(
-            worker_name
-            if worker_name.endswith("_questions")
-            else f"{worker_name}_questions"
-        )
-
-        if worker_questions is None:
-
-            worker_questions = research_plan.get(
-                f"{worker_name}_questions"
+            text = json.dumps(
+                compact,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
             )
 
-        if isinstance(worker_questions, dict):
+        else:
 
-            questions = worker_questions.get(destination)
+            text = str(value)
 
-            if isinstance(questions, list):
-                return [
-                    str(question)
-                    for question in questions
-                ]
+        if len(text) <= max_chars:
+            return compact if isinstance(
+                value,
+                dict
+            ) else text
 
-        if isinstance(worker_questions, list):
+        # Preserve valid JSON where possible.
+        truncated = text[:max_chars]
+
+        return {
+            "verification_excerpt": truncated,
+            "truncated": True,
+            "original_character_count": len(text),
+        }
+
+    @classmethod
+    def _compact_value(
+        cls,
+        value,
+        depth=0
+    ):
+        """
+        Recursively limit deeply nested worker output.
+        """
+
+        if depth >= 4:
+
+            if isinstance(value, str):
+                return value[:1500]
+
+            return str(value)[:1500]
+
+        if isinstance(value, dict):
+
+            result = {}
+
+            for key, item in value.items():
+
+                if key.lower() in {
+                    "raw_response",
+                    "full_response",
+                    "prompt",
+                    "messages",
+                    "debug",
+                    "trace",
+                }:
+                    continue
+
+                result[key] = cls._compact_value(
+                    item,
+                    depth + 1
+                )
+
+            return result
+
+        if isinstance(value, list):
+
             return [
-                str(question)
-                for question in worker_questions
+                cls._compact_value(
+                    item,
+                    depth + 1
+                )
+                for item in value[:20]
             ]
 
-        return []
+        if isinstance(value, str):
 
-    # ============================================================
-    # JSON PARSING
-    # ============================================================
+            return value[:3000]
 
+        return value
+
+    # ==========================================================
+    # NORMALIZE DESTINATIONS
+    # ==========================================================
+
+    @staticmethod
+    def _normalize_destinations(
+        destinations
+    ):
+        if not isinstance(
+            destinations,
+            list
+        ):
+            raise TypeError(
+                "destinations must be a list."
+            )
+
+        if len(destinations) != 3:
+            raise ValueError(
+                "ResearchAgent requires exactly "
+                "THREE destinations."
+            )
+
+        normalized = []
+        seen = set()
+
+        for index, destination in enumerate(
+            destinations,
+            start=1
+        ):
+
+            if isinstance(
+                destination,
+                str
+            ):
+                name = destination.strip()
+                country = ""
+
+            elif isinstance(
+                destination,
+                dict
+            ):
+                name = (
+                    destination.get("name")
+                    or destination.get("destination")
+                    or ""
+                )
+
+                country = (
+                    destination.get("country")
+                    or ""
+                )
+
+                name = str(name).strip()
+                country = str(country).strip()
+
+            else:
+                raise TypeError(
+                    f"Destination #{index} must be "
+                    "a string or dictionary."
+                )
+
+            if not name:
+                raise ValueError(
+                    f"Destination #{index} has no name."
+                )
+
+            key = (
+                name.lower(),
+                country.lower()
+            )
+
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate destination: {name}"
+                )
+
+            seen.add(key)
+
+            normalized.append({
+                "index": index,
+                "name": name,
+                "country": country,
+            })
+
+        return normalized
+
+    # ==========================================================
+    # OLLAMA RESPONSE EXTRACTION
+    # ==========================================================
+
+    @staticmethod
     def _extract_ollama_content(
-        self,
-        response: Any,
-    ) -> str:
-
+        response
+    ):
         if response is None:
             return ""
 
-        if isinstance(response, dict):
+        if isinstance(
+            response,
+            dict
+        ):
 
-            message = response.get("message")
+            message = response.get(
+                "message"
+            )
 
-            if isinstance(message, dict):
-                content = message.get("content")
+            if isinstance(
+                message,
+                dict
+            ):
+
+                content = message.get(
+                    "content"
+                )
 
                 if content:
                     return str(content)
 
-            content = response.get("content")
+            content = response.get(
+                "content"
+            )
 
             if content:
                 return str(content)
 
-        try:
+        message = getattr(
+            response,
+            "message",
+            None
+        )
 
-            message = getattr(
-                response,
-                "message",
-                None,
+        if message is not None:
+
+            content = getattr(
+                message,
+                "content",
+                None
             )
 
-            if message:
-
-                content = getattr(
-                    message,
-                    "content",
-                    None,
-                )
-
-                if content:
-                    return str(content)
-
-        except Exception:
-            pass
+            if content:
+                return str(content)
 
         return str(response)
 
+    # ==========================================================
+    # JSON PARSER
+    # ==========================================================
+
+    @staticmethod
     def _parse_json(
-        self,
-        text: str,
-    ) -> Dict[str, Any]:
+        text
+    ):
+        if not isinstance(
+            text,
+            str
+        ):
+            raise ValueError(
+                "Expected text JSON."
+            )
 
         text = text.strip()
 
-        # Remove markdown code fences.
-        text = re.sub(
-            r"^```(?:json)?\s*",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
+        # Markdown fence.
+        if text.startswith("```"):
 
-        text = re.sub(
-            r"\s*```$",
-            "",
-            text,
-        )
+            lines = text.splitlines()
 
-        text = text.strip()
+            if lines:
+                lines = lines[1:]
+
+            if (
+                lines
+                and lines[-1].strip() == "```"
+            ):
+                lines = lines[:-1]
+
+            text = "\n".join(
+                lines
+            ).strip()
 
         # Direct parse.
         try:
-            parsed = json.loads(text)
+            result = json.loads(text)
 
-            if isinstance(parsed, dict):
-                return parsed
+            if isinstance(
+                result,
+                dict
+            ):
+                return result
 
         except json.JSONDecodeError:
             pass
 
-        # Try to find a JSON object inside the response.
-        start = text.find("{")
-        end = text.rfind("}")
-
-        if start != -1 and end > start:
-
-            candidate = text[start:end + 1]
-
-            try:
-                parsed = json.loads(candidate)
-
-                if isinstance(parsed, dict):
-                    return parsed
-
-            except json.JSONDecodeError:
-                pass
-
-        raise ValueError(
-            "Could not parse Ollama response as JSON"
+        # Balanced object.
+        candidate = (
+            ResearchAgent
+            ._extract_json_object(text)
         )
 
-    # ============================================================
-    # HEALTH / DEBUGGING
-    # ============================================================
+        if candidate is None:
+            raise ValueError(
+                "Could not find JSON object."
+            )
+
+        try:
+            result = json.loads(
+                candidate
+            )
+
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Malformed Gemma JSON: {error}"
+            ) from error
+
+        if not isinstance(
+            result,
+            dict
+        ):
+            raise ValueError(
+                "JSON result must be an object."
+            )
+
+        return result
+
+    # ==========================================================
+    # BALANCED JSON EXTRACTION
+    # ==========================================================
+
+    @staticmethod
+    def _extract_json_object(
+        text
+    ):
+        start = text.find("{")
+
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for index in range(
+            start,
+            len(text)
+        ):
+
+            char = text[index]
+
+            if in_string:
+
+                if escaped:
+                    escaped = False
+                    continue
+
+                if char == "\\":
+                    escaped = True
+                    continue
+
+                if char == '"':
+                    in_string = False
+
+                continue
+
+            if char == '"':
+                in_string = True
+                continue
+
+            if char == "{":
+                depth += 1
+
+            elif char == "}":
+
+                depth -= 1
+
+                if depth == 0:
+                    return text[
+                        start:index + 1
+                    ]
+
+        return None
+
+    # ==========================================================
+    # OLLAMA HEALTH CHECK
+    # ==========================================================
 
     def check_ollama(
-        self,
-    ) -> Dict[str, Any]:
-        """
-        Check whether Ollama is reachable and configured models exist.
-        """
-
+        self
+    ):
         result = {
             "host": self.ollama_host,
+            "research_model": self.research_model,
             "connected": False,
-            "models": {},
+            "model_available": False,
         }
 
         try:
 
-            models_response = self.client.list()
+            response = self.client.list()
 
             result["connected"] = True
 
+            models = getattr(
+                response,
+                "models",
+                []
+            )
+
             available = []
 
-            if isinstance(models_response, dict):
-                model_list = models_response.get("models", [])
+            for model in models:
 
-                for model in model_list:
-
-                    if isinstance(model, dict):
-                        name = model.get("name")
-
-                        if name:
-                            available.append(name)
-
-            else:
-
-                model_list = getattr(
-                    models_response,
-                    "models",
-                    [],
+                name = getattr(
+                    model,
+                    "model",
+                    None
                 )
 
-                for model in model_list:
-
-                    name = getattr(
-                        model,
-                        "model",
-                        None,
-                    )
-
-                    if name:
-                        available.append(name)
-
-            for worker, model in self.worker_models.items():
-
-                result["models"][worker] = {
-                    "configured": model,
-                    "available": model in available,
-                }
+                if name:
+                    available.append(name)
 
             result["available_models"] = available
 
-        except Exception as exc:
+            result["model_available"] = (
+                self.research_model in available
+            )
 
-            result["error"] = str(exc)
+        except Exception as error:
+
+            result["error"] = str(error)
 
         return result
 
-    def test_worker(
-        self,
-        worker: str,
-        destination: str = "Tokyo",
-        country: str = "Japan",
-    ) -> Dict[str, Any]:
-        """
-        Simple manual test for one worker.
-        """
+    # ==========================================================
+    # DIRECT TEST
+    # ==========================================================
 
-        return self.research_worker(
-            worker=worker,
-            destination=destination,
-            country=country,
-            trip_requirements={
-                "trip_length": "7 days",
-                "budget": "budget friendly",
-                "travel_style": "balanced",
-            },
-            research_questions=[
-                "Provide the most useful information for this destination."
+    def test(
+        self,
+        destinations=None
+    ):
+
+        if destinations is None:
+
+            destinations = [
+                {
+                    "name": "Hakone",
+                    "country": "Japan"
+                },
+                {
+                    "name": "Kanazawa",
+                    "country": "Japan"
+                },
+                {
+                    "name": "Takayama",
+                    "country": "Japan"
+                },
+            ]
+
+        requirements = {
+            "interests": [
+                "nature",
+                "mountains",
+                "culture",
+                "peaceful places",
             ],
+            "avoid": [
+                "very crowded cities"
+            ],
+            "trip_length": "7 days",
+            "travel_style": "balanced",
+            "budget": "moderate",
+        }
+
+        return self.research(
+            destinations=destinations,
+            trip_requirements=requirements,
         )
 
 
-# ================================================================
-# SIMPLE STANDALONE TEST
-# ================================================================
-
 if __name__ == "__main__":
 
-    print("=" * 60)
-    print("OLLAMA RESEARCH AGENT TEST")
-    print("=" * 60)
+    print("=" * 70)
+    print("WANDERLUST RESEARCH AGENT")
+    print("=" * 70)
 
     agent = ResearchAgent()
 
-    print("\nOllama status:")
+    print()
+    print("Ollama status:")
     print(
         json.dumps(
             agent.check_ollama(),
@@ -1054,18 +1280,21 @@ if __name__ == "__main__":
         )
     )
 
-    print("\nTesting Worker 1...")
+    print()
+    print("Starting research...")
 
-    result = agent.test_worker(
-        worker="worker_1",
-        destination="Tokyo",
-        country="Japan",
-    )
+    result = agent.test()
+
+    print()
+    print("=" * 70)
+    print("FINAL RESEARCH RESULT")
+    print("=" * 70)
 
     print(
         json.dumps(
             result,
             indent=2,
             ensure_ascii=False,
+            default=str,
         )
     )

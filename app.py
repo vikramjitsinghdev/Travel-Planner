@@ -51,21 +51,18 @@ except Exception as error:
 # RESPONSE HELPERS
 # ============================================================
 
-def success_response(data):
-    """
-    Standard successful API response.
-
-    script.js already understands this format:
-
-        {
-            "status": "success",
-            "data": ...
-        }
-    """
+def success_response(
+    data
+):
 
     return jsonify({
-        "status": "success",
-        "data": data
+
+        "status":
+            "success",
+
+        "data":
+            data
+
     })
 
 
@@ -73,27 +70,23 @@ def error_response(
     message,
     status_code=500
 ):
-    """
-    Standard error response.
-
-    script.js already handles:
-
-        {
-            "status": "error",
-            "message": "..."
-        }
-    """
 
     return jsonify({
-        "status": "error",
-        "message": str(message)
+
+        "status":
+            "error",
+
+        "message":
+            str(message)
+
     }), status_code
 
 
+# ============================================================
+# JSON REQUEST HELPER
+# ============================================================
+
 def get_json_data():
-    """
-    Safely read a JSON object from the request body.
-    """
 
     data = request.get_json(
         silent=True
@@ -127,7 +120,7 @@ def home():
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 @app.route(
@@ -164,14 +157,10 @@ def home_destinations():
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -201,10 +190,6 @@ def random_destinations():
 
     try:
 
-        # ------------------------------------------------------
-        # LIMIT
-        # ------------------------------------------------------
-
         limit = request.args.get(
             "limit",
             default=6,
@@ -212,6 +197,7 @@ def random_destinations():
         )
 
         if limit is None:
+
             limit = 6
 
         limit = max(
@@ -221,10 +207,6 @@ def random_destinations():
                 20
             )
         )
-
-        # ------------------------------------------------------
-        # OPTIONAL FILTERS
-        # ------------------------------------------------------
 
         scope = request.args.get(
             "scope"
@@ -237,10 +219,6 @@ def random_destinations():
         region = request.args.get(
             "region"
         )
-
-        # ------------------------------------------------------
-        # MAIN.PY
-        # ------------------------------------------------------
 
         result = (
             main.get_random_destinations_for_trip({
@@ -264,14 +242,10 @@ def random_destinations():
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -307,10 +281,6 @@ def search_destination():
             "query"
         )
 
-        # ------------------------------------------------------
-        # VALIDATE QUERY
-        # ------------------------------------------------------
-
         if not isinstance(
             query,
             str
@@ -330,14 +300,8 @@ def search_destination():
                 400
             )
 
-        # ------------------------------------------------------
-        # MAIN.PY
-        # ------------------------------------------------------
-
-        result = (
-            main.search_destination(
-                query
-            )
+        result = main.search_destination(
+            query
         )
 
         if not result:
@@ -351,14 +315,10 @@ def search_destination():
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -390,10 +350,8 @@ def destination_details(
 
     try:
 
-        result = (
-            main.get_destination(
-                destination_id
-            )
+        result = main.get_destination(
+            destination_id
         )
 
         if result is None:
@@ -407,14 +365,10 @@ def destination_details(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -460,14 +414,8 @@ def save_basic_information():
                 400
             )
 
-        # ------------------------------------------------------
-        # MAIN.PY
-        # ------------------------------------------------------
-
-        result = (
-            main.create_trip(
-                basic_information
-            )
+        result = main.create_trip(
+            basic_information
         )
 
         if result is None:
@@ -480,14 +428,10 @@ def save_basic_information():
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -506,7 +450,7 @@ def save_basic_information():
 
 
 # ============================================================
-# GET SAVED BASIC TRIP
+# GET BASIC TRIP
 # ============================================================
 
 @app.route(
@@ -519,10 +463,8 @@ def get_basic_trip(
 
     try:
 
-        result = (
-            main.get_trip(
-                trip_id
-            )
+        result = main.get_trip(
+            trip_id
         )
 
         if result is None:
@@ -536,14 +478,10 @@ def get_basic_trip(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -576,7 +514,7 @@ def start_trip():
         data = get_json_data()
 
         # ------------------------------------------------------
-        # VALIDATE TRIP ID
+        # TRIP ID
         # ------------------------------------------------------
 
         trip_id = data.get(
@@ -614,7 +552,7 @@ def start_trip():
             )
 
         # ------------------------------------------------------
-        # VALIDATE USER INPUT
+        # USER INPUT
         # ------------------------------------------------------
 
         user_input = data.get(
@@ -641,67 +579,41 @@ def start_trip():
             )
 
         # ------------------------------------------------------
-        # MAIN.PY OWNS THE ENTIRE AI PIPELINE
+        # MAIN.PY OWNS THE COMPLETE PIPELINE
         # ------------------------------------------------------
         #
-        # app.py does NOT call:
+        # app.py does NOT know about:
         #
-        #   MoodAgent
-        #   TravelAgent
-        #   ResearchAgent
-        #   Ollama
-        #   Gemini
+        # Gemini
+        # MoodAgent
+        # ResearchAgent
+        # Worker 1
+        # Worker 2
+        # Worker 3
+        # Gemma
+        # Pexels
         #
-        # It simply passes the request to main.py.
-        #
-        # main.py:
-        #
-        #   User request
-        #       ↓
-        #   MoodAgent
-        #       ↓
-        #   Main Gemini
-        #       ↓
-        #   5 candidates
-        #       ↓
-        #   Research plan
-        #       ↓
-        #   ResearchAgent
-        #       ↓
-        #   3 Ollama workers
-        #       ↓
-        #   Evaluator
-        #       ↓
-        #   Main Gemini
-        #       ↓
-        #   3 final trips
-        #
+        # Everything is handled by main.py / TravelAgent.
         # ------------------------------------------------------
 
-        result = (
-            main.start_trip({
+        result = main.start_trip({
 
-                "trip_id":
-                    trip_id,
+            "trip_id":
+                trip_id,
 
-                "user_input":
-                    user_input
+            "user_input":
+                user_input
 
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -738,10 +650,6 @@ def update_trip():
 
         data = get_json_data()
 
-        # ------------------------------------------------------
-        # TRIP ID
-        # ------------------------------------------------------
-
         trip_id = data.get(
             "trip_id"
         )
@@ -769,10 +677,6 @@ def update_trip():
                 400
             )
 
-        # ------------------------------------------------------
-        # CHANGE REQUEST
-        # ------------------------------------------------------
-
         change_request = data.get(
             "change_request"
         )
@@ -787,9 +691,7 @@ def update_trip():
                 400
             )
 
-        change_request = (
-            change_request.strip()
-        )
+        change_request = change_request.strip()
 
         if not change_request:
 
@@ -798,34 +700,24 @@ def update_trip():
                 400
             )
 
-        # ------------------------------------------------------
-        # MAIN.PY
-        # ------------------------------------------------------
+        result = main.update_trip({
 
-        result = (
-            main.update_trip({
+            "trip_id":
+                trip_id,
 
-                "trip_id":
-                    trip_id,
+            "change_request":
+                change_request
 
-                "change_request":
-                    change_request
-
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -916,34 +808,24 @@ def select_trip():
                 400
             )
 
-        # ------------------------------------------------------
-        # MAIN.PY
-        # ------------------------------------------------------
+        result = main.select_trip({
 
-        result = (
-            main.select_trip({
+            "trip_id":
+                trip_id,
 
-                "trip_id":
-                    trip_id,
+            "selected_index":
+                selected_index
 
-                "selected_index":
-                    selected_index
-
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -1006,27 +888,21 @@ def trip_status():
                 400
             )
 
-        result = (
-            main.get_trip_status({
+        result = main.get_trip_status({
 
-                "trip_id":
-                    trip_id
+            "trip_id":
+                trip_id
 
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -1085,27 +961,21 @@ def confirm_trip():
                 400
             )
 
-        result = (
-            main.confirm_trip({
+        result = main.confirm_trip({
 
-                "trip_id":
-                    trip_id
+            "trip_id":
+                trip_id
 
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -1164,27 +1034,21 @@ def cancel_trip():
                 400
             )
 
-        result = (
-            main.cancel_trip({
+        result = main.cancel_trip({
 
-                "trip_id":
-                    trip_id
+            "trip_id":
+                trip_id
 
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -1243,27 +1107,21 @@ def delete_trip():
                 400
             )
 
-        result = (
-            main.delete_trip({
+        result = main.delete_trip({
 
-                "trip_id":
-                    trip_id
+            "trip_id":
+                trip_id
 
-            })
-        )
+        })
 
         return success_response(
             result
         )
 
-    except ValueError as error:
-
-        return error_response(
-            error,
-            400
-        )
-
-    except TypeError as error:
+    except (
+        ValueError,
+        TypeError
+    ) as error:
 
         return error_response(
             error,
@@ -1282,14 +1140,17 @@ def delete_trip():
 
 
 # ============================================================
-# 404 HANDLER
+# 404
 # ============================================================
 
 @app.errorhandler(404)
-def handle_not_found(error):
+def handle_not_found(
+    error
+):
 
-    # Keep normal frontend navigation working.
-    if request.path.startswith("/api/"):
+    if request.path.startswith(
+        "/api/"
+    ):
 
         return error_response(
             "API endpoint not found.",
@@ -1302,42 +1163,32 @@ def handle_not_found(error):
 
 
 # ============================================================
-# 405 HANDLER
+# 405
 # ============================================================
 
 @app.errorhandler(405)
-def handle_method_not_allowed(error):
-
-    if request.path.startswith("/api/"):
-
-        return error_response(
-            "HTTP method is not allowed for this endpoint.",
-            405
-        )
+def handle_method_not_allowed(
+    error
+):
 
     return error_response(
-        "HTTP method is not allowed.",
+        "Method not allowed.",
         405
     )
 
 
 # ============================================================
-# GENERAL ERROR HANDLER
+# 500
 # ============================================================
 
 @app.errorhandler(500)
-def handle_internal_error(error):
+def handle_internal_error(
+    error
+):
 
     print(
         f"FLASK INTERNAL ERROR: {error}"
     )
-
-    if request.path.startswith("/api/"):
-
-        return error_response(
-            "Internal server error.",
-            500
-        )
 
     return error_response(
         "Internal server error.",
@@ -1346,13 +1197,18 @@ def handle_internal_error(error):
 
 
 # ============================================================
-# RUN APPLICATION
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
 
     app.run(
-        host="127.0.0.1",
-        port=5000,
+        host="0.0.0.0",
+        port=int(
+            __import__("os").getenv(
+                "PORT",
+                "5000"
+            )
+        ),
         debug=True
     )
