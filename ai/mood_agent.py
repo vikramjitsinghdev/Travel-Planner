@@ -268,8 +268,8 @@ REQUIRED JSON
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict travel "
-                        "requirements extraction system. "
+                        "You are a travel preference "
+                        "extraction system. "
                         "Return exactly one valid JSON object "
                         "and nothing else."
                     )
@@ -280,13 +280,16 @@ REQUIRED JSON
                 }
             ],
 
+            reasoning_effort="low",
+
+            reasoning_format="hidden",
+
             response_format={
                 "type": "json_object"
             },
 
-            max_completion_tokens=900
+            max_completion_tokens=1200
         )
-
         # ======================================================
         # READ RESPONSE
         # ======================================================

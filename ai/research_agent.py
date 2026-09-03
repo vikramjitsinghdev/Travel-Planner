@@ -77,21 +77,21 @@ class ResearchAgent:
             worker1_model
             or os.getenv("OLLAMA_WORKER1_MODEL")
             or os.getenv("OLLAMA_MODEL")
-            or "gemma3:4b"
+            or "gemma4:26b"
         )
 
         self.worker2_model = (
             worker2_model
             or os.getenv("OLLAMA_WORKER2_MODEL")
             or os.getenv("OLLAMA_MODEL")
-            or "gemma3:4b"
+            or "gemma4:26b"
         )
 
         self.worker3_model = (
             worker3_model
             or os.getenv("OLLAMA_WORKER3_MODEL")
             or os.getenv("OLLAMA_MODEL")
-            or "gemma3:4b"
+            or "gemma4:26b"
         )
 
         self.max_concurrency = int(

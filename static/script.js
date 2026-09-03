@@ -2106,20 +2106,105 @@ async function startTrip() {
    CANDIDATES
    ============================================================ */
 
-function getCandidates(
-    trip
-) {
+function getCandidates(trip) {
 
     if (!trip) {
-
         return [];
+    }
+
+    /*
+     * ========================================================
+     * FINAL RECOMMENDATIONS
+     * ========================================================
+     *
+     * The backend's final Gemini stage stores the three
+     * selected travel options in:
+     *
+     *     trip.travel_options
+     *
+     * These are the destinations the user should see.
+     */
+
+    if (
+        Array.isArray(
+            trip.travel_options
+        )
+    ) {
+
+        return trip.travel_options
+            .filter(
+                option =>
+                    option &&
+                    typeof option === "object"
+            )
+            .map(
+                (option, index) => {
+
+                    return {
+
+                        name:
+                            option.destination ||
+                            option.destination_name ||
+                            "Unknown destination",
+
+                        country:
+                            option.country ||
+                            "",
+
+                        reason:
+                            option.why_it_fits ||
+                            option.reason ||
+                            option.match_reason ||
+                            "",
+
+                        rank:
+                            option.rank ||
+                            index + 1,
+
+                        highlights:
+                            Array.isArray(
+                                option.highlights
+                            )
+                                ? option.highlights
+                                : [],
+
+                        limitations:
+                            Array.isArray(
+                                option.limitations
+                            )
+                                ? option.limitations
+                                : [],
+
+                        budget_summary:
+                            option.budget_summary ||
+                            "",
+
+                        practicality_summary:
+                            option.practicality_summary ||
+                            "",
+
+                        weather_summary:
+                            option.weather_summary ||
+                            "",
+
+                        confidence:
+                            option.confidence ||
+                            ""
+
+                    };
+
+                }
+            );
     }
 
 
     /*
-     * Main architecture:
+     * ========================================================
+     * FALLBACK FOR OLD RESPONSES
+     * ========================================================
      *
-     * candidate_result.candidates
+     * Only use these if the backend did not return
+     * travel_options.
      */
 
     if (
@@ -2132,12 +2217,9 @@ function getCandidates(
         return trip
             .candidate_result
             .candidates;
+
     }
 
-
-    /*
-     * Direct candidates.
-     */
 
     if (
         Array.isArray(
@@ -2163,20 +2245,18 @@ function getCandidates(
 
                         reason:
                             ""
+
                     };
+
                 }
 
-
                 return candidate;
+
             }
         );
+
     }
 
-
-    /*
-     * Some responses may put candidates
-     * inside data.
-     */
 
     if (
         Array.isArray(
@@ -2185,27 +2265,12 @@ function getCandidates(
     ) {
 
         return trip.data.candidates;
-    }
 
-
-    /*
-     * Some responses may return the
-     * candidate result directly.
-     */
-
-    if (
-        Array.isArray(
-            trip.candidate_result
-        )
-    ) {
-
-        return trip.candidate_result;
     }
 
 
     return [];
 }
-
 
 /* ============================================================
    RENDER AI RESULTS
@@ -4324,24 +4389,53 @@ function initializeForms() {
 
 
     const plannerForm =
-        document.getElementById(
-            "tripForm"
-        );
+    document.getElementById(
+        "tripForm"
+    );
+
+if (plannerForm) {
+
+    plannerForm.addEventListener(
+        "submit",
+        event => {
+
+            event.preventDefault();
+
+            startTrip();
+
+        }
+    );
+
+}
 
 
-    if (plannerForm) {
+const startButton =
+    document.getElementById(
+        "startTripButton"
+    );
 
-        plannerForm.addEventListener(
-            "submit",
-            event => {
+if (startButton) {
 
-                event.preventDefault();
+    startButton.addEventListener(
+        "click",
+        event => {
 
+            /*
+             * The inline HTML chat controller
+             * handles opening the visual chat scene.
+             *
+             * This handler handles the actual
+             * backend request.
+             */
 
-                startTrip();
-            }
-        );
-    }
+            event.preventDefault();
+
+            startTrip();
+
+        }
+    );
+
+}
 }
 
 

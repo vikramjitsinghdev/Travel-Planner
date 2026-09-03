@@ -1434,6 +1434,20 @@ def run_travel_orchestration(
         research_plan=
             research_plan
     )
+    errors = research_results.get(
+        "errors",
+        []
+    )
+
+    successful_workers = 15 - len(errors)
+
+    if successful_workers == 0:
+
+        raise RuntimeError(
+            "All research workers failed. "
+            "No valid research data is available "
+            "for final destination selection."
+        )
 
     # ==========================================================
     # STEP 5 — EVALUATOR
