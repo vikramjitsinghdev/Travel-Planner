@@ -1,1034 +1,746 @@
-import json
 import os
-from typing import Any, Dict
+import json
+import requests
+
+from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from tavily_service import TavilyService
 
 
-class WorkerAgent3:
+load_dotenv()
+
+
+class Worker3:
     """
-    WANDERLUST WORKER AGENT 3
+    Worker 3
 
-    Independent destination research worker.
+    LLM:
+        LLM7 - fast
 
-    Researches exactly one assigned destination.
+    Web research:
+        TavilyService
 
-    It does NOT:
-        - choose destinations
-        - compare destinations
-        - rank destinations
-        - recommend alternatives
-        - create itineraries
-        - make final decisions
+    Responsibility:
+        Research exactly ONE destination and return a standardized
+        destination research result.
 
-    Reliability:
-        - Optional JSON mode.
-        - Strict JSON prompting.
-        - Three generation attempts.
-        - Truncation detection.
-        - Balanced JSON extraction.
-        - Destination validation.
-        - Result normalization.
+    This worker does NOT:
+        - Generate destinations
+        - Research multiple destinations
+        - Perform rechecking
+        - Calculate total budget
+        - Handle Pexels
+        - Handle maps
+        - Handle database operations
+
+    Rechecking is performed externally by RecheckAgent after this
+    worker finishes.
     """
 
     def __init__(self):
 
-        load_dotenv()
+        # =========================================================
+        # LLM7 CONFIGURATION
+        # =========================================================
 
-        self.api_key = os.getenv("LLM7_API_TOKEN")
+        self.llm7_api_key = os.getenv("LLM7_API_KEY")
 
-        if not self.api_key:
-            raise ValueError(
-                "LLM7_API_TOKEN is not set in the .env file."
-            )
+        self.llm7_base_url = os.getenv(
+            "LLM7_BASE_URL",
+            "https://api.llm7.io/v1"
+        ).rstrip("/")
 
-        self.model = os.getenv(
+        self.llm7_model = os.getenv(
             "LLM7_WORKER3_MODEL",
             "fast"
         )
 
-        self.base_url = os.getenv(
-            "LLM7_BASE_URL",
-            "https://api.llm7.io/v1"
-        )
-
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
-
-        self.use_json_mode = (
+        self.llm7_json_mode = (
             os.getenv(
                 "LLM7_WORKER3_JSON_MODE",
                 "false"
-            )
-            .strip()
-            .lower()
+            ).lower()
             == "true"
         )
 
-        self.max_attempts = 3
+        if not self.llm7_api_key:
+            raise ValueError(
+                "LLM7_API_KEY was not found."
+            )
 
-    # ==========================================================
-    # MAIN RESEARCH
-    # ==========================================================
+        # =========================================================
+        # TAVILY
+        # =========================================================
+
+        self.tavily = TavilyService()
+
+    # =============================================================
+    # PUBLIC METHOD
+    # =============================================================
 
     def research(
         self,
-        destination,
-        country="",
-        trip_requirements=None
+        destination: str,
+        country: Optional[str] = None,
+        trip_days: int = 7,
+        starting_location: Optional[str] = None
     ) -> Dict[str, Any]:
+        """
+        Research one destination.
 
-        destination = self._validate_destination(destination)
-        country = self._validate_country(country)
-        trip_requirements = self._validate_requirements(
-            trip_requirements
-        )
+        Parameters:
+            destination:
+                Destination selected by the Research Agent.
 
-        requirements_json = json.dumps(
-            trip_requirements,
-            ensure_ascii=False,
-            default=str
-        )
+            country:
+                Country containing the destination.
 
-        system_prompt = self._build_system_prompt(
-            destination,
-            country,
-            requirements_json
-        )
+            trip_days:
+                Requested trip duration.
 
-        user_prompt = self._build_user_prompt(
-            destination,
-            country,
-            requirements_json
-        )
+            starting_location:
+                User's departure location.
 
-        result = self._generate_valid_result(
-            system_prompt,
-            user_prompt
-        )
+        Returns:
+            Standardized destination research dictionary.
+        """
 
-        return self._normalize_result(
-            result,
-            destination,
-            country
-        )
+        # ---------------------------------------------------------
+        # Validate destination
+        # ---------------------------------------------------------
 
-    # ==========================================================
-    # SYSTEM PROMPT
-    # ==========================================================
-
-    @staticmethod
-    def _build_system_prompt(
-        destination,
-        country,
-        requirements_json
-    ):
-
-        return f"""
-You are WANDERLUST WORKER AGENT 3.
-
-You are an independent destination research worker.
-
-ASSIGNED DESTINATION:
-{destination}
-
-COUNTRY:
-{country}
-
-USER REQUIREMENTS:
-{requirements_json}
-
-============================================================
-DESTINATION BOUNDARY
-============================================================
-
-Research EXACTLY:
-
-{destination}
-
-Do NOT:
-
-- research another destination
-- recommend another destination
-- compare destinations
-- rank destinations
-- select destinations
-- create itineraries
-- make final travel decisions
-
-Nearby locations may only be mentioned when they are directly
-necessary context for transportation or geography.
-
-Do not turn nearby locations into separate research subjects.
-
-============================================================
-RESEARCH
-============================================================
-
-Research:
-
-- destination overview
-- geography
-- destination character
-- nature
-- mountains
-- forests
-- lakes
-- rivers
-- beaches
-- wildlife
-- parks
-- scenic landscapes
-- hiking
-- outdoor experiences
-- attractions
-- activities
-- culture
-- history
-- food
-- atmosphere
-- transportation
-- weather
-- seasonal conditions
-- accommodation
-- affordability
-- costs
-- budget compatibility
-- accessibility
-- safety and logistics
-- preference fit
-- strengths
-- limitations
-- uncertainties
-- evidence
-
-Keep information concise.
-
-Use approximately 3-6 items for list fields unless more
-information is genuinely necessary.
-
-============================================================
-FACTUAL DISCIPLINE
-============================================================
-
-Do not fabricate:
-
-- attractions
-- prices
-- statistics
-- opening hours
-- schedules
-- hotel availability
-- flight availability
-- current weather
-- events
-- visa rules
-- exchange rates
-- sources
-
-Do not pretend general knowledge is live information.
-
-When information is uncertain, explicitly mark it as uncertain.
-
-============================================================
-JSON OUTPUT
-============================================================
-
-Return exactly ONE JSON object.
-
-Rules:
-
-- First character must be {{
-- Last character must be }}
-- No Markdown
-- No ```json
-- No code fences
-- No explanations
-- No comments
-- Double quotes only
-- No trailing commas
-- No additional top-level fields
-- Valid JSON only
-
-The response must be directly parseable using:
-
-json.loads()
-
-Keep descriptions concise enough to prevent truncation.
-"""
-
-    # ==========================================================
-    # USER PROMPT
-    # ==========================================================
-
-    @staticmethod
-    def _build_user_prompt(
-        destination,
-        country,
-        requirements_json
-    ):
-
-        return f"""
-Research ONLY:
-
-Destination: {destination}
-Country: {country}
-
-User requirements:
-
-{requirements_json}
-
-Return EXACTLY this JSON structure:
-
-{{
-  "worker": "worker_3",
-  "destination": "{destination}",
-  "country": "{country}",
-
-  "destination_overview": {{
-    "description": "",
-    "geography": "",
-    "general_character": "",
-    "known_for": []
-  }},
-
-  "destination_character": {{
-    "urban": null,
-    "suburban": null,
-    "rural": null,
-    "wilderness_oriented": null,
-    "coastal": null,
-    "mountainous": null,
-    "remote": null,
-    "highly_developed": null
-  }},
-
-  "nature": {{
-    "mountains": [],
-    "forests": [],
-    "lakes": [],
-    "rivers": [],
-    "beaches": [],
-    "wildlife": [],
-    "parks": [],
-    "scenic_landscapes": [],
-    "hiking": [],
-    "outdoor_experiences": []
-  }},
-
-  "attractions": [],
-
-  "activities": {{
-    "sightseeing": [],
-    "nature": [],
-    "hiking": [],
-    "photography": [],
-    "culture": [],
-    "history": [],
-    "food": [],
-    "relaxation": [],
-    "adventure": [],
-    "entertainment": [],
-    "nightlife": [],
-    "shopping": []
-  }},
-
-  "culture": {{
-    "description": "",
-    "traditions": [],
-    "cultural_experiences": []
-  }},
-
-  "history": {{
-    "description": "",
-    "historical_sites": [],
-    "historical_significance": []
-  }},
-
-  "food": {{
-    "description": "",
-    "regional_cuisine": [],
-    "food_experiences": []
-  }},
-
-  "atmosphere": {{
-    "description": "",
-    "peacefulness": "",
-    "crowd_level": "",
-    "tourism_intensity": "",
-    "urban_intensity": ""
-  }},
-
-  "transportation": {{
-    "getting_there": [],
-    "airports": [],
-    "trains": [],
-    "buses": [],
-    "roads": [],
-    "public_transportation": [],
-    "taxis": [],
-    "rideshare": [],
-    "rental_cars": [],
-    "walking": [],
-    "cycling": [],
-    "car_dependence": "",
-    "general_ease": ""
-  }},
-
-  "weather": {{
-    "climate": "",
-    "temperature": "",
-    "rainfall": "",
-    "humidity": "",
-    "snow": "",
-    "extreme_weather": []
-  }},
-
-  "seasonal_conditions": {{
-    "spring": "",
-    "summer": "",
-    "autumn": "",
-    "winter": ""
-  }},
-
-  "accommodation": {{
-    "general_character": "",
-    "types": [],
-    "seasonal_variation": "",
-    "availability_notes": [],
-    "uncertainties": []
-  }},
-
-  "affordability": {{
-    "overall_level": "",
-    "description": "",
-    "confidence": ""
-  }},
-
-  "costs": {{
-    "accommodation": {{
-      "budget": "",
-      "mid_range": "",
-      "higher_end": "",
-      "notes": ""
-    }},
-    "food": {{
-      "budget": "",
-      "casual": "",
-      "mid_range": "",
-      "groceries": "",
-      "notes": ""
-    }},
-    "transportation": {{
-      "public_transport": "",
-      "taxi": "",
-      "rideshare": "",
-      "rental_car": "",
-      "other": "",
-      "notes": ""
-    }},
-    "activities": {{
-      "free": [],
-      "low_cost": [],
-      "moderate_cost": [],
-      "expensive": []
-    }},
-    "daily_cost_character": {{
-      "low_budget": "",
-      "moderate_budget": "",
-      "comfortable_budget": ""
-    }},
-    "major_cost_drivers": []
-  }},
-
-  "budget_compatibility": {{
-    "matches": [],
-    "partial_matches": [],
-    "conflicts": []
-  }},
-
-  "accessibility": {{
-    "general": "",
-    "public_transport": "",
-    "walking": "",
-    "terrain": "",
-    "remote_area_limitations": [],
-    "mobility_considerations": []
-  }},
-
-  "safety_and_logistics": {{
-    "considerations": [],
-    "weather_risks": [],
-    "terrain_risks": [],
-    "transportation_risks": [],
-    "seasonal_disruptions": []
-  }},
-
-  "preference_fit": {{
-    "matches": [],
-    "partial_matches": [],
-    "conflicts": []
-  }},
-
-  "strengths": [],
-  "limitations": [],
-  "uncertainties": [],
-
-  "evidence": [
-    {{
-      "claim": "",
-      "source": "",
-      "source_type": ""
-    }}
-  ],
-
-  "worker_summary": ""
-}}
-
-IMPORTANT:
-
-Do not add fields.
-
-Do not remove fields.
-
-Do not create root-level "matches",
-"partial_matches", or "conflicts".
-
-Those belong ONLY inside:
-
-"budget_compatibility"
-
-or:
-
-"preference_fit"
-
-Return ONLY JSON.
-"""
-
-    # ==========================================================
-    # GENERATION
-    # ==========================================================
-
-    def _generate_valid_result(
-        self,
-        system_prompt,
-        user_prompt
-    ):
-
-        last_error = None
-
-        for attempt in range(1, self.max_attempts + 1):
-
-            try:
-
-                if attempt == 1:
-
-                    retry_instruction = ""
-
-                elif attempt == 2:
-
-                    retry_instruction = """
-Your previous response was invalid JSON.
-
-Generate the complete research again.
-
-Use strict JSON syntax.
-Check every comma, quote, bracket and brace.
-
-Return ONLY valid JSON.
-"""
-
-                else:
-
-                    retry_instruction = """
-Your previous response could not be parsed.
-
-Generate a fresh and more concise complete report.
-
-Do not explain.
-Do not use Markdown.
-Do not use code fences.
-
-Return ONLY valid JSON.
-"""
-
-                messages = [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            user_prompt
-                            + "\n\n"
-                            + retry_instruction
-                        )
-                    }
-                ]
-
-                kwargs = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0,
-                    "max_tokens": 7000
-                }
-
-                if self.use_json_mode:
-
-                    kwargs["response_format"] = {
-                        "type": "json_object"
-                    }
-
-                try:
-
-                    response = self.client.chat.completions.create(
-                        **kwargs
-                    )
-
-                except Exception as json_mode_error:
-
-                    # If JSON mode isn't supported, automatically
-                    # retry without it.
-                    if (
-                        self.use_json_mode
-                        and (
-                            "response_format"
-                            in str(json_mode_error).lower()
-                            or
-                            "unsupported"
-                            in str(json_mode_error).lower()
-                            or
-                            "json"
-                            in str(json_mode_error).lower()
-                            or
-                            "400"
-                            in str(json_mode_error)
-                        )
-                    ):
-
-                        kwargs.pop(
-                            "response_format",
-                            None
-                        )
-
-                        response = (
-                            self.client
-                            .chat
-                            .completions
-                            .create(**kwargs)
-                        )
-
-                    else:
-                        raise
-
-                if not response.choices:
-
-                    raise ValueError(
-                        "Worker 3 received no response choices."
-                    )
-
-                choice = response.choices[0]
-
-                content = choice.message.content
-
-                if not content:
-
-                    raise ValueError(
-                        "Worker 3 returned an empty response."
-                    )
-
-                finish_reason = getattr(
-                    choice,
-                    "finish_reason",
-                    None
-                )
-
-                if finish_reason == "length":
-
-                    raise ValueError(
-                        "Worker 3 response was truncated."
-                    )
-
-                result = self._parse_json(content)
-
-                if not isinstance(result, dict):
-
-                    raise ValueError(
-                        "Worker 3 JSON root must be an object."
-                    )
-
-                return result
-
-            except Exception as error:
-
-                last_error = error
-
-                if attempt < self.max_attempts:
-                    continue
-
-        raise ValueError(
-            "Worker 3 failed to produce valid JSON after "
-            f"{self.max_attempts} attempts.\n\n"
-            f"Last error: {last_error}"
-        )
-
-    # ==========================================================
-    # JSON PARSER
-    # ==========================================================
-
-    @staticmethod
-    def _parse_json(content):
-
-        if not isinstance(content, str):
+        if not destination or not destination.strip():
             raise ValueError(
-                "Worker 3 response must be a string."
-            )
-
-        text = content.strip()
-
-        if text.startswith("```"):
-
-            lines = text.splitlines()
-
-            if lines and lines[0].strip().startswith("```"):
-                lines = lines[1:]
-
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-
-            text = "\n".join(lines).strip()
-
-        try:
-
-            parsed = json.loads(text)
-
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Worker 3 JSON root is not an object."
-                )
-
-            return parsed
-
-        except json.JSONDecodeError:
-            pass
-
-        candidate = WorkerAgent3._extract_json_object(text)
-
-        if candidate is None:
-
-            raise ValueError(
-                "Worker 3 did not return a recoverable JSON object."
-            )
-
-        try:
-
-            parsed = json.loads(candidate)
-
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Worker 3 recovered JSON root is not an object."
-                )
-
-            return parsed
-
-        except json.JSONDecodeError as error:
-
-            raise ValueError(
-                f"Worker 3 returned malformed JSON: {error}"
-            ) from error
-
-    # ==========================================================
-    # BALANCED JSON EXTRACTION
-    # ==========================================================
-
-    @staticmethod
-    def _extract_json_object(text):
-
-        start = text.find("{")
-
-        if start == -1:
-            return None
-
-        depth = 0
-        in_string = False
-        escape = False
-
-        for index in range(start, len(text)):
-
-            char = text[index]
-
-            if in_string:
-
-                if escape:
-                    escape = False
-                    continue
-
-                if char == "\\":
-                    escape = True
-                    continue
-
-                if char == '"':
-                    in_string = False
-
-                continue
-
-            if char == '"':
-                in_string = True
-                continue
-
-            if char == "{":
-
-                depth += 1
-
-            elif char == "}":
-
-                depth -= 1
-
-                if depth == 0:
-
-                    return text[start:index + 1]
-
-        return None
-
-    # ==========================================================
-    # NORMALIZATION
-    # ==========================================================
-
-    def _normalize_result(
-        self,
-        result,
-        destination,
-        country
-    ):
-
-        if not isinstance(result, dict):
-
-            raise ValueError(
-                "Worker 3 result must be a dictionary."
-            )
-
-        returned_destination = result.get(
-            "destination"
-        )
-
-        if returned_destination:
-
-            if (
-                str(returned_destination).strip().lower()
-                != destination.strip().lower()
-            ):
-
-                raise ValueError(
-                    "Worker 3 researched a different destination.\n"
-                    f"Expected: {destination}\n"
-                    f"Returned: {returned_destination}"
-                )
-
-        # ------------------------------------------------------
-        # Normalize identity.
-        # ------------------------------------------------------
-
-        result["worker"] = "worker_3"
-        result["destination"] = destination
-        result["country"] = country
-
-        # ------------------------------------------------------
-        # Prevent accidental legacy root-level preference fields.
-        #
-        # If the model ignores the schema and places these at
-        # root, move them into preference_fit rather than losing
-        # useful information.
-        # ------------------------------------------------------
-
-        if any(
-            key in result
-            for key in (
-                "matches",
-                "partial_matches",
-                "conflicts"
-            )
-        ):
-
-            preference_fit = result.get(
-                "preference_fit"
-            )
-
-            if not isinstance(preference_fit, dict):
-                preference_fit = {}
-
-            for key in (
-                "matches",
-                "partial_matches",
-                "conflicts"
-            ):
-
-                if key in result:
-
-                    if key not in preference_fit:
-                        preference_fit[key] = result[key]
-
-                    del result[key]
-
-            result["preference_fit"] = preference_fit
-
-        # ------------------------------------------------------
-        # Defaults.
-        # ------------------------------------------------------
-
-        defaults = {
-
-            "destination_overview": {},
-
-            "destination_character": {},
-
-            "nature": {},
-
-            "attractions": [],
-
-            "activities": {},
-
-            "culture": {},
-
-            "history": {},
-
-            "food": {},
-
-            "atmosphere": {},
-
-            "transportation": {},
-
-            "weather": {},
-
-            "seasonal_conditions": {},
-
-            "accommodation": {},
-
-            "affordability": {},
-
-            "costs": {},
-
-            "budget_compatibility": {},
-
-            "accessibility": {},
-
-            "safety_and_logistics": {},
-
-            "preference_fit": {},
-
-            "strengths": [],
-
-            "limitations": [],
-
-            "uncertainties": [],
-
-            "evidence": [],
-
-            "worker_summary": ""
-        }
-
-        for key, default_value in defaults.items():
-
-            if key not in result or result[key] is None:
-                result[key] = default_value
-
-        return result
-
-    # ==========================================================
-    # INPUT VALIDATION
-    # ==========================================================
-
-    @staticmethod
-    def _validate_destination(destination):
-
-        if not isinstance(destination, str):
-
-            raise TypeError(
-                "destination must be a string."
+                "Destination cannot be empty."
             )
 
         destination = destination.strip()
 
-        if not destination:
+        if country:
+            country = country.strip()
 
-            raise ValueError(
-                "destination cannot be empty."
-            )
+        # ---------------------------------------------------------
+        # 1. Tavily web research
+        # ---------------------------------------------------------
 
-        return destination
-
-    @staticmethod
-    def _validate_country(country):
-
-        if country is None:
-            return ""
-
-        if not isinstance(country, str):
-            country = str(country)
-
-        return country.strip()
-
-    @staticmethod
-    def _validate_requirements(trip_requirements):
-
-        if trip_requirements is None:
-            return {}
-
-        if not isinstance(trip_requirements, dict):
-
-            raise TypeError(
-                "trip_requirements must be a dictionary."
-            )
-
-        return trip_requirements
-
-
-# ==============================================================
-# DIRECT TEST
-# ==============================================================
-
-if __name__ == "__main__":
-
-    print("=" * 70)
-    print("WORKER 3 DIRECT TEST")
-    print("=" * 70)
-
-    worker = WorkerAgent3()
-
-    print("Model:", worker.model)
-    print("Base URL:", worker.base_url)
-    print("JSON mode:", worker.use_json_mode)
-
-    result = worker.research(
-        destination="Takayama",
-        country="Japan",
-        trip_requirements={
-            "interests": [
-                "nature",
-                "mountains",
-                "peaceful places",
-                "culture"
-            ],
-            "avoid": [
-                "very crowded cities"
-            ],
-            "budget": {
-                "level": "moderate"
-            }
-        }
-    )
-
-    print()
-    print("SUCCESS")
-    print("=" * 70)
-
-    print(
-        json.dumps(
-            result,
-            indent=2,
-            ensure_ascii=False
+        search_results = self._search_destination(
+            destination=destination,
+            country=country,
+            starting_location=starting_location
         )
-    )
+
+        # ---------------------------------------------------------
+        # 2. LLM7 analysis
+        # ---------------------------------------------------------
+
+        result = self._analyze_with_llm7(
+            destination=destination,
+            country=country,
+            search_results=search_results,
+            trip_days=trip_days,
+            starting_location=starting_location
+        )
+
+        # ---------------------------------------------------------
+        # 3. Validate standardized result
+        # ---------------------------------------------------------
+
+        result = self._validate_result(
+            result=result,
+            destination=destination,
+            country=country
+        )
+
+        # ---------------------------------------------------------
+        # 4. Safety cleanup
+        # ---------------------------------------------------------
+        # Worker 3 must NOT return total_budget.
+        # Budget calculation belongs outside the workers.
+
+        result.pop("total_budget", None)
+
+        return result
+
+    # =============================================================
+    # TAVILY SEARCH
+    # =============================================================
+
+    def _search_destination(
+        self,
+        destination: str,
+        country: Optional[str],
+        starting_location: Optional[str]
+    ):
+        """
+        Search Tavily for information required by the worker.
+
+        Country is included whenever available so that searches
+        are more precise and less ambiguous.
+        """
+
+        destination_name = destination
+
+        if country:
+            destination_name = f"{destination}, {country}"
+
+        queries = [
+            (
+                f"{destination_name} top major attractions "
+                f"things to do"
+            ),
+            (
+                f"{destination_name} average hotel "
+                f"accommodation cost per night"
+            ),
+            (
+                f"{destination_name} average food cost "
+                f"per day tourist"
+            ),
+            (
+                f"{destination_name} average local "
+                f"transportation cost per day"
+            )
+        ]
+
+        # ---------------------------------------------------------
+        # Traveling cost from starting location
+        # ---------------------------------------------------------
+
+        if starting_location:
+            queries.append(
+                f"{starting_location} to {destination_name} "
+                f"travel cost flight train bus"
+            )
+        else:
+            queries.append(
+                f"{destination_name} travel cost "
+                f"flight train bus"
+            )
+
+        return self.tavily.search_many(
+            queries,
+            max_results=5
+        )
+
+    # =============================================================
+    # LLM7 ANALYSIS
+    # =============================================================
+
+    def _analyze_with_llm7(
+        self,
+        destination: str,
+        country: Optional[str],
+        search_results,
+        trip_days: int,
+        starting_location: Optional[str]
+    ):
+        """
+        Send Tavily research to LLM7 and request the standardized
+        Worker 3 output.
+        """
+
+        research_text = self._format_search_results(
+            search_results
+        )
+
+        origin = (
+            starting_location
+            if starting_location
+            else "No starting location provided."
+        )
+
+        country_name = (
+            country
+            if country
+            else "Country not explicitly provided."
+        )
+
+        # ---------------------------------------------------------
+        # System prompt
+        # ---------------------------------------------------------
+
+        system_prompt = """
+You are Worker 3 in a multi-agent travel research system.
+
+Your job is to analyze web research about ONE destination.
+
+The Research Agent has already selected the destination.
+Do NOT select another destination.
+
+Return ONLY one valid JSON object.
+
+Do not return Markdown.
+Do not return ```json.
+Do not return explanations.
+Do not return reasoning.
+Do not return additional fields.
+
+Use EXACTLY this structure:
+
+{
+    "destination": "string",
+    "country": "string",
+    "major_attractions": [
+        "string",
+        "string",
+        "string"
+    ],
+    "traveling_cost": number_or_null,
+    "residence_cost": number_or_null,
+    "average_food_cost": number_or_null,
+    "daily_average_travel_cost": number_or_null,
+    "summary": "string"
+}
+
+Definitions:
+
+traveling_cost:
+    One-time estimated cost of reaching the destination
+    from the provided starting location.
+
+residence_cost:
+    Total estimated accommodation cost for the requested
+    trip duration.
+
+average_food_cost:
+    Average food cost PER DAY.
+
+daily_average_travel_cost:
+    Average local transportation cost PER DAY.
+
+major_attractions:
+    Exactly 3 major attractions in the destination.
+
+Important rules:
+
+1. Use the provided destination.
+2. Use the provided country when available.
+3. Use the web research as the primary source of information.
+4. Do not invent unsupported prices.
+5. If reliable information is unavailable, use null.
+6. Numeric cost fields must contain numbers or null.
+7. major_attractions must contain exactly 3 items.
+8. Keep the summary concise and useful.
+9. Do not calculate or return total_budget.
+10. Do not add any fields outside the required structure.
+
+Return ONLY the JSON object.
+"""
+
+        # ---------------------------------------------------------
+        # User prompt
+        # ---------------------------------------------------------
+
+        user_prompt = f"""
+Destination:
+{destination}
+
+Country:
+{country_name}
+
+Trip duration:
+{trip_days} days
+
+Starting location:
+{origin}
+
+WEB RESEARCH
+============
+
+{research_text}
+
+Analyze the research and return ONLY the required JSON object.
+"""
+
+        # ---------------------------------------------------------
+        # LLM7 request headers
+        # ---------------------------------------------------------
+
+        headers = {
+            "Authorization": (
+                f"Bearer {self.llm7_api_key}"
+            ),
+            "Content-Type": "application/json"
+        }
+
+        # ---------------------------------------------------------
+        # Request payload
+        # ---------------------------------------------------------
+
+        payload = {
+            "model": self.llm7_model,
+
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+
+            "temperature": 0.1,
+
+            "stream": False
+        }
+
+        # ---------------------------------------------------------
+        # Optional JSON mode
+        # ---------------------------------------------------------
+
+        if self.llm7_json_mode:
+            payload["response_format"] = {
+                "type": "json_object"
+            }
+
+        # ---------------------------------------------------------
+        # Send request
+        # ---------------------------------------------------------
+
+        response = requests.post(
+            f"{self.llm7_base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        # ---------------------------------------------------------
+        # Extract LLM7 response
+        # ---------------------------------------------------------
+
+        try:
+            content = (
+                data["choices"][0]
+                ["message"]["content"]
+            )
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError
+        ) as exc:
+
+            raise RuntimeError(
+                "Unexpected LLM7 API response."
+            ) from exc
+
+        return self._extract_json(content)
+
+    # =============================================================
+    # FORMAT TAVILY RESULTS
+    # =============================================================
+
+    def _format_search_results(
+        self,
+        search_results
+    ) -> str:
+        """
+        Convert Tavily results into a readable text block
+        for LLM7.
+        """
+
+        sections = []
+
+        for search in search_results:
+
+            query = search.get(
+                "query",
+                ""
+            )
+
+            results = search.get(
+                "results",
+                []
+            )
+
+            section = [
+                f"SEARCH QUERY: {query}"
+            ]
+
+            for index, result in enumerate(
+                results,
+                start=1
+            ):
+
+                section.append(
+                    f"""
+RESULT {index}
+Title: {result.get("title", "")}
+URL: {result.get("url", "")}
+Content: {result.get("content", "")}
+"""
+                )
+
+            sections.append(
+                "\n".join(section)
+            )
+
+        return "\n\n====================\n\n".join(
+            sections
+        )
+
+    # =============================================================
+    # JSON EXTRACTION
+    # =============================================================
+
+    def _extract_json(
+        self,
+        content: str
+    ) -> Dict[str, Any]:
+        """
+        Extract a JSON object from the LLM7 response.
+
+        Handles both clean JSON and accidental Markdown
+        code fences.
+        """
+
+        if not isinstance(content, str):
+            raise RuntimeError(
+                "Worker 3 received a non-string LLM7 response."
+            )
+
+        content = content.strip()
+
+        # ---------------------------------------------------------
+        # Remove Markdown code fence
+        # ---------------------------------------------------------
+
+        if content.startswith("```"):
+
+            lines = content.splitlines()
+
+            # Remove first line such as ```json
+            lines = lines[1:]
+
+            # Remove closing ```
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+
+            content = "\n".join(
+                lines
+            ).strip()
+
+        # ---------------------------------------------------------
+        # Try normal JSON parsing
+        # ---------------------------------------------------------
+
+        try:
+
+            result = json.loads(
+                content
+            )
+
+        except json.JSONDecodeError:
+
+            # -----------------------------------------------------
+            # Attempt to locate JSON object inside extra text
+            # -----------------------------------------------------
+
+            start = content.find("{")
+            end = content.rfind("}")
+
+            if start == -1 or end == -1:
+
+                raise RuntimeError(
+                    "Worker 3 could not parse LLM7 JSON."
+                )
+
+            try:
+
+                result = json.loads(
+                    content[start:end + 1]
+                )
+
+            except json.JSONDecodeError as exc:
+
+                raise RuntimeError(
+                    "Worker 3 received malformed JSON."
+                ) from exc
+
+        # ---------------------------------------------------------
+        # JSON must be an object
+        # ---------------------------------------------------------
+
+        if not isinstance(result, dict):
+
+            raise RuntimeError(
+                "Worker 3 expected a JSON object."
+            )
+
+        return result
+
+    # =============================================================
+    # VALIDATION
+    # =============================================================
+
+    def _validate_result(
+        self,
+        result: Dict[str, Any],
+        destination: str,
+        country: Optional[str]
+    ) -> Dict[str, Any]:
+        """
+        Validate and normalize the standardized Worker 3 result.
+        """
+
+        required_fields = [
+            "destination",
+            "country",
+            "major_attractions",
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost",
+            "summary"
+        ]
+
+        # ---------------------------------------------------------
+        # Required fields
+        # ---------------------------------------------------------
+
+        for field in required_fields:
+
+            if field not in result:
+
+                raise RuntimeError(
+                    f"Worker 3 missing field: {field}"
+                )
+
+        # ---------------------------------------------------------
+        # Destination
+        # ---------------------------------------------------------
+        # The Research Agent is authoritative about which
+        # destination Worker 3 was assigned.
+
+        result["destination"] = destination
+
+        # ---------------------------------------------------------
+        # Country
+        # ---------------------------------------------------------
+
+        if country:
+            result["country"] = country
+
+        elif not isinstance(
+            result["country"],
+            str
+        ):
+
+            result["country"] = ""
+
+        # ---------------------------------------------------------
+        # Attractions
+        # ---------------------------------------------------------
+
+        attractions = result[
+            "major_attractions"
+        ]
+
+        if not isinstance(
+            attractions,
+            list
+        ):
+
+            raise RuntimeError(
+                "major_attractions must be a list."
+            )
+
+        if len(attractions) != 3:
+
+            raise RuntimeError(
+                "Worker 3 must return exactly 3 attractions."
+            )
+
+        # ---------------------------------------------------------
+        # Validate attraction values
+        # ---------------------------------------------------------
+
+        for attraction in attractions:
+
+            if not isinstance(
+                attraction,
+                str
+            ):
+
+                raise RuntimeError(
+                    "Each major attraction must be a string."
+                )
+
+        # ---------------------------------------------------------
+        # Numeric fields
+        # ---------------------------------------------------------
+
+        numeric_fields = [
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost"
+        ]
+
+        for field in numeric_fields:
+
+            value = result[field]
+
+            if value is None:
+                continue
+
+            try:
+
+                numeric_value = float(
+                    value
+                )
+
+                # Reject NaN / infinity
+                if not (
+                    numeric_value
+                    == numeric_value
+                ):
+
+                    result[field] = None
+
+                elif numeric_value < 0:
+
+                    result[field] = None
+
+                else:
+
+                    result[field] = numeric_value
+
+            except (
+                ValueError,
+                TypeError
+            ):
+
+                result[field] = None
+
+        # ---------------------------------------------------------
+        # Summary
+        # ---------------------------------------------------------
+
+        if not isinstance(
+            result["summary"],
+            str
+        ):
+
+            result["summary"] = str(
+                result["summary"]
+            )
+
+        # ---------------------------------------------------------
+        # Remove any accidental extra field
+        # ---------------------------------------------------------
+
+        result.pop(
+            "total_budget",
+            None
+        )
+
+        return result

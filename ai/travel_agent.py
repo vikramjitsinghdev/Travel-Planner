@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from google import genai
 
 from ai.research_agent import ResearchAgent
-from pexels_service import get_destination_image
+import pexels_service
 
 
 load_dotenv()
@@ -14,580 +14,416 @@ load_dotenv()
 
 class TravelAgent:
     """
-    WANDERLUST MAIN TRAVEL ORCHESTRATOR
+    TravelAgent is responsible for:
 
-    Flow
-    ----
+    1. Receiving the user's travel request.
+    2. Asking Gemini to select EXACTLY 3 destinations.
+    3. Sending those 3 destinations to ResearchAgent.
+    4. Combining research + images with the destinations.
+    5. Returning one consistent destination schema.
 
-        User Input
-             ↓
-        MoodAgent
-             ↓
-        TripRequirements
-             ↓
-        TravelAgent / Gemini
-             ↓
-        EXACTLY 3 DESTINATIONS
-             ↓
-        ResearchAgent
-          ├── Worker 1 → Destination 1
-          ├── Worker 2 → Destination 2
-          └── Worker 3 → Destination 3
-             ↓
-        Gemma verification
-             ↓
-        Pexels images
-             ↓
-        Combined results
-             ↓
-        main.py / Flask
-             ↓
-        Frontend
-
-    TravelAgent does NOT:
-        - directly call workers
-        - research destinations
-        - rank five destinations
-        - perform a second destination-selection stage
-        - create an itinerary during recommendations
+    TravelAgent does NOT perform web research itself.
+    ResearchAgent owns the research process.
     """
 
-    # ==========================================================
-    # INITIALIZATION
-    # ==========================================================
-
     def __init__(self):
+        self.api_key = os.getenv("GEMINI_API_KEY")
 
-        load_dotenv()
-
-        api_key = os.getenv(
-            "GEMINI_API_KEY"
-        )
-
-        if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY is not set."
+        if not self.api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not configured."
             )
 
-        self.client = genai.Client(
-            api_key=api_key
+        self.model = (
+            os.getenv("GEMINI_TRAVEL_MODEL")
+            or os.getenv("GEMINI_MODEL")
+            or "gemini-3.6-flash"
         )
 
-        self.model = os.getenv(
-            "GEMINI_MAIN_MODEL",
-            "gemini-3.6-flash"
-        )
+        self.client = genai.Client(api_key=self.api_key)
 
+        # ResearchAgent owns all research workers and Ollama verification.
         self.research_agent = ResearchAgent()
 
-        self.pexels_enabled = bool(
-            os.getenv(
-                "PEXELS_API_KEY"
-            )
-        )
+        self.max_workers = 3
 
-    # ==========================================================
-    # GEMINI: FIND EXACTLY 3
-    # ==========================================================
+    # ============================================================
+    # PUBLIC API
+    # ============================================================
+
+    def get_trip_recommendations(
+        self,
+        user_input,
+        preferences=None,
+        budget=None,
+        trip_information=None,
+    ):
+        """
+        Main entry point used by main.py.
+
+        Returns:
+
+        {
+            "success": True,
+            "candidates": [...],
+            "research": {...},
+            "travel_options": [...]
+        }
+        """
+
+        try:
+            candidates = self.find_candidates(
+                user_input=user_input,
+                preferences=preferences,
+                budget=budget,
+                trip_information=trip_information,
+            )
+
+            if not candidates:
+                return {
+                    "success": False,
+                    "error": "Gemini did not return any destinations.",
+                    "candidates": [],
+                    "research": {},
+                    "travel_options": [],
+                }
+
+            if len(candidates) != 3:
+                return {
+                    "success": False,
+                    "error": (
+                        f"TravelAgent requires exactly 3 destinations, "
+                        f"but Gemini returned {len(candidates)}."
+                    ),
+                    "candidates": candidates,
+                    "research": {},
+                    "travel_options": [],
+                }
+
+            result = self.research_destinations(
+                candidates=candidates,
+                trip_requirements=preferences,
+                trip_information=trip_information,
+            )
+
+            return result
+
+        except Exception as e:
+            print(f"[TravelAgent] ERROR: {e}")
+
+            return {
+                "success": False,
+                "error": str(e),
+                "candidates": [],
+                "research": {},
+                "travel_options": [],
+            }
+
+    # ============================================================
+    # DESTINATION SELECTION
+    # ============================================================
 
     def find_candidates(
         self,
         user_input,
-        preferences,
-        budget,
+        preferences=None,
+        budget=None,
         trip_information=None,
     ):
         """
-        Gemini selects exactly three destinations.
+        Ask Gemini to select exactly 3 destinations.
 
-        Gemini does NOT research them.
+        IMPORTANT:
+        This method only selects destinations.
+        It does not research them.
         """
 
-        if not isinstance(
-            user_input,
-            str
-        ) or not user_input.strip():
-
-            raise ValueError(
-                "user_input must be a non-empty string."
-            )
-
-        if not isinstance(
-            preferences,
-            dict
-        ):
-            raise TypeError(
-                "preferences must be a dictionary."
-            )
-
-        if not isinstance(
-            budget,
-            dict
-        ):
-            raise TypeError(
-                "budget must be a dictionary."
-            )
-
-        if trip_information is None:
-            trip_information = {}
-
-        if not isinstance(
-            trip_information,
-            dict
-        ):
-            raise TypeError(
-                "trip_information must be a dictionary."
-            )
+        preferences = preferences or {}
+        trip_information = trip_information or {}
 
         prompt = f"""
-You are the main destination-selection AI for Wanderlust.
+You are the destination-selection component of an AI travel planner.
 
-Select EXACTLY THREE travel destinations.
+Your ONLY job is to select EXACTLY 3 destinations that best fit the
+traveler's requirements.
 
-You are NOT the research agent.
-
-Do NOT browse the internet.
-
-Do NOT provide current prices.
-Do NOT provide current availability.
-Do NOT claim anything is booked.
-Do NOT create an itinerary.
-
-Use the user's request and structured requirements to select
-the three strongest destination options.
+DO NOT perform detailed research.
+DO NOT invent hotels, flights, prices, weather statistics, or schedules.
+DO NOT return more or fewer than 3 destinations.
 
 USER REQUEST:
 {user_input}
 
-TRIP REQUIREMENTS:
-{json.dumps(
-    preferences,
-    ensure_ascii=False,
-    default=str
-)}
+MOOD / TRAVEL REQUIREMENTS:
+{json.dumps(preferences, indent=2, ensure_ascii=False)}
 
-TRIP INFORMATION:
-{json.dumps(
-    trip_information,
-    ensure_ascii=False,
-    default=str
-)}
+BASIC TRIP INFORMATION:
+{json.dumps(trip_information, indent=2, ensure_ascii=False)}
 
 BUDGET:
-{json.dumps(
-    budget,
-    ensure_ascii=False,
-    default=str
-)}
+{json.dumps(budget, indent=2, ensure_ascii=False)}
 
-Return ONLY JSON in this exact structure:
+Return ONLY valid JSON.
+
+Required format:
 
 {{
-    "research_strategy": "",
     "candidates": [
         {{
-            "name": "",
-            "country": "",
-            "reason": "",
-            "description": "",
+            "name": "Destination name",
+            "country": "Country",
+            "description": "Short description",
+            "reason": "Why this destination matches the traveler",
             "research_priority": 1
         }},
         {{
-            "name": "",
-            "country": "",
-            "reason": "",
-            "description": "",
+            "name": "Destination name",
+            "country": "Country",
+            "description": "Short description",
+            "reason": "Why this destination matches the traveler",
             "research_priority": 2
         }},
         {{
-            "name": "",
-            "country": "",
-            "reason": "",
-            "description": "",
+            "name": "Destination name",
+            "country": "Country",
+            "description": "Short description",
+            "reason": "Why this destination matches the traveler",
             "research_priority": 3
         }}
     ]
 }}
 
-There MUST be exactly three unique destinations.
+Rules:
+
+- Exactly 3 candidates.
+- Every candidate MUST have a non-empty "name".
+- Every candidate MUST have a non-empty "country".
+- Do not use "destination" instead of "name".
+- Keep descriptions concise.
+- Do not fabricate detailed factual information.
 """
 
-        response = self.client.interactions.create(
+        response = self.client.models.generate_content(
             model=self.model,
-            input=prompt,
+            contents=prompt,
         )
 
-        content = getattr(
-            response,
-            "output_text",
-            None
-        )
+        raw = self._extract_response_text(response)
 
-        if not content:
+        data = self._parse_json(raw)
+
+        candidates = data.get("candidates", [])
+
+        if not isinstance(candidates, list):
             raise ValueError(
-                "Gemini returned an empty response."
+                "Gemini response contains an invalid candidates field."
             )
 
-        result = self._parse_json_object(
-            content,
-            "candidate destinations"
-        )
-
-        candidates = result.get(
-            "candidates"
-        )
-
-        if not isinstance(
-            candidates,
-            list
-        ):
+        if len(candidates) != 3:
             raise ValueError(
-                "Gemini did not return a candidates list."
+                f"Gemini returned {len(candidates)} candidates instead of exactly 3."
             )
 
-        cleaned = []
-        seen = set()
+        normalized = []
 
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates, start=1):
 
-            if not isinstance(
-                candidate,
-                dict
-            ):
-                continue
-
-            name = str(
-                candidate.get(
-                    "name",
-                    ""
+            if not isinstance(candidate, dict):
+                raise ValueError(
+                    f"Candidate {index} is not a JSON object."
                 )
+
+            # Canonical field = name.
+            name = (
+                candidate.get("name")
+                or candidate.get("destination")
+                or ""
             ).strip()
 
-            country = str(
-                candidate.get(
-                    "country",
-                    ""
-                )
+            country = (
+                candidate.get("country")
+                or ""
             ).strip()
 
-            if not name or not country:
-                continue
+            if not name:
+                raise ValueError(
+                    f"Candidate {index} has no valid name."
+                )
 
-            key = (
-                name.lower(),
-                country.lower()
-            )
+            if not country:
+                raise ValueError(
+                    f"Candidate {index} has no valid country."
+                )
 
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            cleaned.append({
+            normalized_candidate = {
                 "name": name,
                 "country": country,
-                "reason": str(
-                    candidate.get(
-                        "reason",
-                        ""
-                    )
+                "description": (
+                    candidate.get("description")
+                    or ""
                 ).strip(),
-                "description": str(
-                    candidate.get(
-                        "description",
-                        ""
-                    )
+                "reason": (
+                    candidate.get("reason")
+                    or ""
                 ).strip(),
-                "research_priority": len(
-                    cleaned
-                ) + 1,
-            })
+                "research_priority": (
+                    candidate.get("research_priority")
+                    or index
+                ),
+            }
 
-        if len(cleaned) != 3:
-            raise ValueError(
-                "Gemini must return exactly three unique "
-                f"destinations. Got {len(cleaned)}."
-            )
+            # Compatibility alias.
+            normalized_candidate["destination"] = name
 
-        return {
-            "research_strategy": str(
-                result.get(
-                    "research_strategy",
-                    ""
-                )
-            ).strip(),
+            normalized.append(normalized_candidate)
 
-            "candidates": cleaned,
-        }
+        return normalized
 
-    # ==========================================================
-    # RESEARCH + PEXELS
-    # ==========================================================
+    # ============================================================
+    # RESEARCH
+    # ============================================================
 
     def research_destinations(
         self,
         candidates,
         trip_requirements=None,
+        trip_information=None,
     ):
         """
-        Run:
+        Send exactly the 3 selected destinations to ResearchAgent.
 
-            ResearchAgent
-            +
-            Pexels
-
-        concurrently.
-
-        ResearchAgent internally runs the three workers
-        concurrently.
+        Pexels and research run concurrently.
         """
-
-        if not isinstance(
-            candidates,
-            list
-        ):
-            raise TypeError(
-                "candidates must be a list."
-            )
 
         if len(candidates) != 3:
             raise ValueError(
-                "Exactly three candidates are required."
+                "research_destinations requires exactly 3 candidates."
             )
 
-        if trip_requirements is None:
-            trip_requirements = {}
+        trip_requirements = trip_requirements or {}
+        trip_information = trip_information or {}
 
-        normalized = []
+        print("\n[TravelAgent] Starting ResearchAgent...")
 
-        seen = set()
+        research_result = None
+        image_results = {}
 
-        for candidate in candidates:
+        # --------------------------------------------------------
+        # ResearchAgent
+        # --------------------------------------------------------
 
-            if not isinstance(
-                candidate,
-                dict
-            ):
-                raise ValueError(
-                    "Each candidate must be a dictionary."
-                )
-
-            name = str(
-                candidate.get(
-                    "name",
-                    ""
-                )
-            ).strip()
-
-            country = str(
-                candidate.get(
-                    "country",
-                    ""
-                )
-            ).strip()
-
-            if not name:
-                raise ValueError(
-                    "Candidate has no destination name."
-                )
-
-            key = (
-                name.lower(),
-                country.lower()
+        try:
+            research_result = self.research_agent.research(
+                destinations=candidates,
+                trip_requirements=trip_requirements,
+                trip_information=trip_information,
             )
 
-            if key in seen:
-                raise ValueError(
-                    f"Duplicate destination: {name}"
-                )
-
-            seen.add(key)
-
-            normalized.append({
-                "name": name,
-                "country": country,
-                "reason": str(
-                    candidate.get(
-                        "reason",
-                        ""
-                    )
-                ).strip(),
-                "description": str(
-                    candidate.get(
-                        "description",
-                        ""
-                    )
-                ).strip(),
-                "research_priority": candidate.get(
-                    "research_priority"
-                ),
-            })
-
-        # ------------------------------------------------------
-        # Research and Pexels are independent.
-        # ------------------------------------------------------
-
-        with ThreadPoolExecutor(
-            max_workers=2
-        ) as executor:
-
-            research_future = executor.submit(
-                self.research_agent.research,
-                normalized,
+        except TypeError:
+            # Compatibility with an older ResearchAgent signature.
+            research_result = self.research_agent.research(
+                candidates,
                 trip_requirements,
             )
 
-            image_future = executor.submit(
-                self._get_destination_images,
-                normalized,
+        except Exception as e:
+            print(
+                f"[TravelAgent] ResearchAgent failed: {e}"
             )
 
-            try:
-                research_result = (
-                    research_future.result()
-                )
-
-            except Exception as error:
-
-                research_result = {
-                    "success": False,
-                    "destinations": {},
-                    "workers": {},
-                    "verification": {},
-                    "errors": [
-                        f"ResearchAgent error: {error}"
-                    ],
-                }
-
-            try:
-                image_results = (
-                    image_future.result()
-                )
-
-            except Exception as error:
-
-                image_results = {}
-
-                for candidate in normalized:
-
-                    key = self._destination_key(
-                        candidate["name"],
-                        candidate["country"],
-                    )
-
-                    image_results[key] = {
-                        "image_url": None,
-                        "pexels_url": None,
-                        "photographer": None,
-                        "error": str(error),
-                    }
-
-        return self._combine_results(
-            normalized,
-            research_result,
-            image_results,
-        )
-
-    # ==========================================================
-    # PEXELS
-    # ==========================================================
-
-    def _get_destination_images(
-        self,
-        candidates,
-    ):
-        results = {}
-
-        if not self.pexels_enabled:
-
-            for candidate in candidates:
-
-                key = self._destination_key(
-                    candidate["name"],
-                    candidate["country"],
-                )
-
-                results[key] = {
-                    "image_url": None,
-                    "pexels_url": None,
-                    "photographer": None,
-                    "error": "PEXELS_API_KEY is not set.",
-                }
-
-            return results
-
-        with ThreadPoolExecutor(
-            max_workers=3
-        ) as executor:
-
-            futures = {
-                executor.submit(
-                    self._get_single_image,
-                    candidate,
-                ): candidate
-                for candidate in candidates
+            research_result = {
+                "success": False,
+                "destinations": {},
+                "workers": {},
+                "verification": {},
+                "errors": [str(e)],
             }
 
-            for future in as_completed(
-                futures
-            ):
+        # --------------------------------------------------------
+        # Pexels
+        # --------------------------------------------------------
 
-                candidate = futures[future]
+        with ThreadPoolExecutor(max_workers=3) as executor:
 
-                key = self._destination_key(
+            futures = {}
+
+            for index, candidate in enumerate(candidates, start=1):
+
+                future = executor.submit(
+                    self._get_destination_image,
                     candidate["name"],
                     candidate["country"],
                 )
+
+                futures[index] = future
+
+            for index, future in futures.items():
 
                 try:
-                    results[key] = future.result()
+                    image_results[index] = future.result()
 
-                except Exception as error:
+                except Exception as e:
+                    print(
+                        f"[TravelAgent] Pexels failed for destination "
+                        f"{index}: {e}"
+                    )
 
-                    results[key] = {
-                        "image_url": None,
-                        "pexels_url": None,
-                        "photographer": None,
-                        "error": str(error),
-                    }
+                    image_results[index] = None
 
-        return results
+        # --------------------------------------------------------
+        # Combine
+        # --------------------------------------------------------
 
-    @staticmethod
-    def _get_single_image(
-        candidate
-    ):
-
-        result = get_destination_image(
-            destination_name=candidate["name"],
-            country=candidate["country"],
+        return self._combine_results(
+            candidates=candidates,
+            research_result=research_result,
+            image_results=image_results,
         )
 
-        if not isinstance(
-            result,
-            dict
-        ):
-            return {
-                "image_url": None,
-                "pexels_url": None,
-                "photographer": None,
-            }
+    # ============================================================
+    # PEXELS
+    # ============================================================
 
-        return {
-            "image_url": result.get(
-                "image_url"
-            ),
-            "pexels_url": result.get(
-                "pexels_url"
-            ),
-            "photographer": result.get(
-                "photographer"
-            ),
-        }
+    def _get_destination_image(self, name, country):
+        """
+        Retrieve a Pexels image.
 
-    # ==========================================================
-    # COMBINE EVERYTHING
-    # ==========================================================
+        Failure is non-fatal.
+        """
+
+        try:
+
+            query = f"{name} {country}"
+
+            # Support the existing pexels_service implementation.
+            if hasattr(pexels_service, "search_destination_image"):
+                return pexels_service.search_destination_image(query)
+
+            if hasattr(pexels_service, "get_destination_image"):
+                return pexels_service.get_destination_image(
+                    name,
+                    country,
+                )
+
+            if hasattr(pexels_service, "search_images"):
+                results = pexels_service.search_images(query)
+
+                if results:
+                    return results[0]
+
+            return None
+
+        except Exception as e:
+            print(
+                f"[TravelAgent] Image lookup failed for "
+                f"{name}: {e}"
+            )
+
+            return None
+
+    # ============================================================
+    # COMBINE
+    # ============================================================
 
     def _combine_results(
         self,
@@ -596,616 +432,259 @@ There MUST be exactly three unique destinations.
         image_results,
     ):
         """
-        IMPORTANT FIX:
+        Combine:
 
-        ResearchAgent's worker results are stored as:
+        Gemini candidate
+        +
+        Worker research
+        +
+        Pexels image
 
-            research_result["workers"]["worker_1"]
-            research_result["workers"]["worker_2"]
-            research_result["workers"]["worker_3"]
-
-        The old TravelAgent incorrectly expected the detailed
-        worker reports to already be inside:
-
-            research_result["destinations"]
-
-        This version maps them correctly.
+        into one canonical destination object.
         """
 
-        if not isinstance(
-            research_result,
-            dict
-        ):
-            research_result = {
-                "success": False,
-                "workers": {},
-                "verification": {},
-                "errors": [
-                    "Invalid ResearchAgent result."
-                ],
-            }
+        workers = {}
 
-        workers = research_result.get(
-            "workers",
-            {}
-        )
+        if isinstance(research_result, dict):
+            workers = research_result.get("workers", {}) or {}
 
-        if not isinstance(
-            workers,
-            dict
-        ):
-            workers = {}
+        final_destinations = []
 
-        combined = []
+        for index, candidate in enumerate(candidates, start=1):
 
-        for index, candidate in enumerate(
-            candidates,
-            start=1
-        ):
+            worker_key = f"worker_{index}"
 
-            worker_key = (
-                f"worker_{index}"
-            )
-
-            research = workers.get(
+            worker_result = workers.get(
                 worker_key,
                 {}
             )
 
-            if not isinstance(
-                research,
-                dict
-            ):
-                research = {}
+            if not isinstance(worker_result, dict):
+                worker_result = {}
 
-            image_key = self._destination_key(
-                candidate["name"],
-                candidate["country"],
+            worker_success = bool(
+                worker_result.get("success")
             )
 
-            image = image_results.get(
-                image_key,
-                {
-                    "image_url": None,
-                    "pexels_url": None,
-                    "photographer": None,
-                },
+            research_data = worker_result.get(
+                "research"
             )
 
-            combined.append({
+            if research_data is None:
+                research_data = worker_result.get(
+                    "data"
+                )
+
+            if research_data is None:
+                research_data = {}
+
+            # ----------------------------------------------------
+            # CANONICAL SCHEMA
+            # ----------------------------------------------------
+
+            destination = {
                 "rank": index,
 
-                "destination": candidate[
-                    "name"
-                ],
+                # CANONICAL NAME
+                "name": candidate["name"],
 
-                "country": candidate[
-                    "country"
-                ],
-
-                "reason": candidate.get(
-                    "reason",
-                    ""
-                ),
+                "country": candidate["country"],
 
                 "description": candidate.get(
                     "description",
                     ""
                 ),
 
+                "reason": candidate.get(
+                    "reason",
+                    ""
+                ),
+
                 "research_priority": candidate.get(
                     "research_priority",
-                    index,
+                    index
                 ),
 
-                "image": {
-                    "image_url": image.get(
-                        "image_url"
-                    ),
-                    "pexels_url": image.get(
-                        "pexels_url"
-                    ),
-                    "photographer": image.get(
-                        "photographer"
-                    ),
-                },
+                "image": image_results.get(index),
 
-                # Actual worker research.
-                "research": research,
-            })
+                "research": research_data,
 
-        # ------------------------------------------------------
-        # IMPORTANT:
-        #
-        # success means the actual worker research completed.
-        #
-        # Gemma verification failure does NOT destroy research.
-        # ------------------------------------------------------
+                "research_success": worker_success,
 
-        worker_success = all(
-            isinstance(
-                workers.get(
-                    f"worker_{i}"
-                ),
-                dict,
-            )
-            and workers[
-                f"worker_{i}"
-            ].get(
-                "success",
-                False
-            )
-            for i in range(1, 4)
+                "worker": worker_key,
+            }
+
+            # ----------------------------------------------------
+            # BACKWARD COMPATIBILITY
+            # ----------------------------------------------------
+
+            destination["destination"] = destination["name"]
+
+            final_destinations.append(destination)
+
+        successful_workers = sum(
+            1
+            for destination in final_destinations
+            if destination["research_success"]
         )
 
-        return {
-            "success": worker_success,
-
-            "destinations": combined,
-
-            "research": {
-                "success": worker_success,
-
-                "workers": workers,
-
-                "verification": research_result.get(
-                    "verification",
-                    {},
-                ),
-
-                "errors": research_result.get(
-                    "errors",
-                    [],
-                ),
-            },
-        }
-
-    # ==========================================================
-    # COMPLETE RECOMMENDATION PIPELINE
-    # ==========================================================
-
-    def get_trip_recommendations(
-        self,
-        user_input,
-        preferences,
-        budget,
-        trip_information=None,
-    ):
-        """
-        Complete recommendation pipeline.
-
-        1. Gemini selects exactly 3.
-        2. ResearchAgent researches exactly those 3.
-        3. Workers run concurrently.
-        4. Gemma performs lightweight QC.
-        5. Pexels gets images concurrently.
-        6. Results are combined.
-        """
-
-        candidate_result = self.find_candidates(
-            user_input=user_input,
-            preferences=preferences,
-            budget=budget,
-            trip_information=trip_information,
+        research_success = (
+            successful_workers == 3
         )
 
-        candidates = candidate_result[
-            "candidates"
-        ]
-
-        research_requirements = {
-            "preferences": preferences,
-            "budget": budget,
-            "trip_information": (
-                trip_information
-                if isinstance(
-                    trip_information,
-                    dict
-                )
-                else {}
-            ),
-            "user_request": user_input,
-        }
-
-        enriched = self.research_destinations(
-            candidates=candidates,
-            trip_requirements=research_requirements,
+        overall_success = (
+            len(final_destinations) == 3
         )
 
-        return {
-            "success": enriched.get(
-                "success",
-                False,
-            ),
+        result = {
+            "success": overall_success,
 
-            "research_strategy": candidate_result.get(
-                "research_strategy",
-                "",
-            ),
+            "candidates": final_destinations,
 
-            "destinations": enriched.get(
-                "destinations",
-                [],
-            ),
+            # Same objects under travel_options for existing code.
+            "travel_options": final_destinations,
 
-            "research": enriched.get(
-                "research",
-                {},
-            ),
+            "research": research_result,
+
+            "research_success": research_success,
+
+            "successful_workers": successful_workers,
+
+            "worker_count": 3,
         }
 
-    # ==========================================================
+        return result
+
+    # ============================================================
     # SELECTED TRIP
-    # ==========================================================
+    # ============================================================
 
     def build_selected_trip(
         self,
         selected_destination,
-        user_input,
-        preferences,
-        budget,
-        research=None,
-        map_data=None,
+        trip_requirements=None,
         trip_information=None,
     ):
         """
-        Generate cost information after the user selects
-        one of the three destinations.
+        Build the selected destination response.
 
-        This remains separate from recommendation generation.
+        This does not perform another research cycle.
         """
 
-        research = (
-            research
-            if isinstance(research, dict)
-            else {}
-        )
+        trip_requirements = trip_requirements or {}
+        trip_information = trip_information or {}
 
-        map_data = (
-            map_data
-            if isinstance(map_data, list)
-            else []
-        )
+        if isinstance(selected_destination, dict):
 
-        trip_information = (
-            trip_information
-            if isinstance(trip_information, dict)
-            else {}
-        )
+            selected = dict(selected_destination)
 
-        if not isinstance(
-            preferences,
-            dict
-        ):
-            raise TypeError(
-                "preferences must be a dictionary."
+        else:
+
+            selected = {
+                "name": str(selected_destination),
+                "country": "",
+                "description": "",
+                "reason": "",
+                "research": {},
+            }
+
+        # Canonical name.
+        if not selected.get("name"):
+            selected["name"] = selected.get(
+                "destination",
+                ""
             )
 
-        if not isinstance(
-            budget,
-            dict
-        ):
-            raise TypeError(
-                "budget must be a dictionary."
+        # Compatibility alias.
+        selected["destination"] = selected["name"]
+
+        selected["trip_information"] = trip_information
+        selected["trip_requirements"] = trip_requirements
+
+        return selected
+
+    # ============================================================
+    # UTILITIES
+    # ============================================================
+
+    @staticmethod
+    def _extract_response_text(response):
+
+        if response is None:
+            raise ValueError(
+                "Gemini returned no response."
             )
 
-        prompt = f"""
-You are the trip cost-analysis component of Wanderlust.
-
-The user has already selected this destination:
-
-{selected_destination}
-
-USER REQUEST:
-{user_input}
-
-TRIP REQUIREMENTS:
-{json.dumps(
-    preferences,
-    ensure_ascii=False,
-    default=str
-)}
-
-BUDGET:
-{json.dumps(
-    budget,
-    ensure_ascii=False,
-    default=str
-)}
-
-RESEARCH:
-{json.dumps(
-    research,
-    ensure_ascii=False,
-    default=str
-)}
-
-MAP DATA:
-{json.dumps(
-    map_data,
-    ensure_ascii=False,
-    default=str
-)}
-
-TRIP INFORMATION:
-{json.dumps(
-    trip_information,
-    ensure_ascii=False,
-    default=str
-)}
-
-Rules:
-
-- Use only supplied information.
-- Do not browse.
-- Do not invent prices.
-- Unknown prices must be null.
-- Do not claim bookings.
-- Do not claim availability.
-- Do not invent schedules.
-- Calculate totals from known numeric values only.
-
-Return ONLY JSON:
-
-{{
-    "destination": "",
-    "costs": [
-        {{
-            "category": "",
-            "amount": null,
-            "description": ""
-        }}
-    ],
-    "total_estimated_cost": 0,
-    "unknown_costs": [],
-    "within_budget": true,
-    "notes": []
-}}
-"""
-
-        response = self.client.interactions.create(
-            model=self.model,
-            input=prompt,
+        # New Google GenAI response.
+        text = getattr(
+            response,
+            "text",
+            None,
         )
 
-        content = getattr(
+        if text:
+            return text
+
+        # Older response style.
+        output_text = getattr(
             response,
             "output_text",
-            None
+            None,
         )
 
-        if not content:
-            raise ValueError(
-                "Gemini returned an empty selected-trip response."
-            )
+        if output_text:
+            return output_text
 
-        result = self._parse_json_object(
-            content,
-            "selected trip"
+        # Last resort.
+        if isinstance(response, str):
+            return response
+
+        raise ValueError(
+            "Could not extract text from Gemini response."
         )
-
-        costs = result.get(
-            "costs",
-            []
-        )
-
-        if not isinstance(
-            costs,
-            list
-        ):
-            costs = []
-
-        cleaned_costs = []
-
-        for cost in costs:
-
-            if not isinstance(
-                cost,
-                dict
-            ):
-                continue
-
-            amount = cost.get(
-                "amount"
-            )
-
-            if amount is not None:
-
-                try:
-                    amount = round(
-                        float(amount),
-                        2
-                    )
-
-                except (
-                    TypeError,
-                    ValueError
-                ):
-                    amount = None
-
-            cleaned_costs.append({
-                "category": str(
-                    cost.get(
-                        "category",
-                        "other"
-                    )
-                ).strip(),
-
-                "amount": amount,
-
-                "description": str(
-                    cost.get(
-                        "description",
-                        ""
-                    )
-                ).strip(),
-            })
-
-        total = round(
-            sum(
-                cost["amount"]
-                for cost in cleaned_costs
-                if cost["amount"] is not None
-            ),
-            2
-        )
-
-        unknown = result.get(
-            "unknown_costs",
-            []
-        )
-
-        if not isinstance(
-            unknown,
-            list
-        ):
-            unknown = []
-
-        notes = result.get(
-            "notes",
-            []
-        )
-
-        if not isinstance(
-            notes,
-            list
-        ):
-            notes = []
-
-        return {
-            "destination": str(
-                result.get(
-                    "destination",
-                    selected_destination
-                )
-            ).strip(),
-
-            "costs": cleaned_costs,
-
-            "total_estimated_cost": total,
-
-            "unknown_costs": [
-                str(item).strip()
-                for item in unknown
-                if str(item).strip()
-            ],
-
-            "within_budget": result.get(
-                "within_budget",
-                True
-            ),
-
-            "notes": [
-                str(item).strip()
-                for item in notes
-                if str(item).strip()
-            ],
-        }
-
-    # ==========================================================
-    # DESTINATION KEY
-    # ==========================================================
 
     @staticmethod
-    def _destination_key(
-        destination,
-        country
-    ):
-        return (
-            f"{str(destination).strip().lower()}"
-            f"|"
-            f"{str(country).strip().lower()}"
-        )
+    def _parse_json(raw):
 
-    # ==========================================================
-    # GEMINI JSON PARSER
-    # ==========================================================
-
-    @staticmethod
-    def _parse_json_object(
-        content,
-        description="response"
-    ):
-
-        if not isinstance(
-            content,
-            str
-        ):
+        if not raw:
             raise ValueError(
-                f"Invalid Gemini {description}."
+                "Gemini returned an empty response."
             )
 
-        content = content.strip()
+        raw = raw.strip()
 
-        if content.startswith(
-            "```"
-        ):
+        # Remove markdown JSON fences.
+        if raw.startswith("```"):
+            raw = raw.replace(
+                "```json",
+                "",
+                1,
+            )
 
-            lines = content.splitlines()
+            raw = raw.replace(
+                "```",
+                "",
+            )
 
-            if lines:
-                lines = lines[1:]
-
-            if (
-                lines
-                and lines[-1].strip() == "```"
-            ):
-                lines = lines[:-1]
-
-            content = "\n".join(
-                lines
-            ).strip()
+            raw = raw.strip()
 
         try:
-
-            result = json.loads(
-                content
-            )
-
-            if isinstance(
-                result,
-                dict
-            ):
-                return result
+            return json.loads(raw)
 
         except json.JSONDecodeError:
-            pass
 
-        start = content.find(
-            "{"
-        )
+            # Try to recover JSON object from surrounding text.
+            start = raw.find("{")
+            end = raw.rfind("}")
 
-        end = content.rfind(
-            "}"
-        )
+            if start != -1 and end != -1 and end > start:
 
-        if (
-            start == -1
-            or end == -1
-            or end <= start
-        ):
-            raise ValueError(
-                f"Gemini did not return JSON for {description}."
-            )
+                extracted = raw[
+                    start:end + 1
+                ]
 
-        try:
-
-            result = json.loads(
-                content[start:end + 1]
-            )
-
-        except json.JSONDecodeError as error:
+                return json.loads(extracted)
 
             raise ValueError(
-                f"Invalid JSON for {description}: {error}"
-            ) from error
-
-        if not isinstance(
-            result,
-            dict
-        ):
-            raise ValueError(
-                f"Gemini {description} must be a JSON object."
+                "Gemini returned invalid JSON."
             )
-
-        return result

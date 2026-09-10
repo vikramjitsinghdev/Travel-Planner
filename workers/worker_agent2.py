@@ -1,821 +1,582 @@
-import json
 import os
-from typing import Any, Dict
+import json
+import requests
+
+from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from tavily_service import TavilyService
 
 
-class WorkerAgent2:
+load_dotenv()
+
+
+class Worker2:
     """
-    WANDERLUST WORKER AGENT 2
+    Worker 2
 
-    Independent destination research worker.
+    LLM:
+        Ollama
+        gemma4:latest
 
-    Each invocation researches exactly ONE destination.
+    Web research:
+        TavilyService
 
-    Reliability:
-        - JSON mode when supported.
-        - Strict JSON prompting.
-        - Multiple attempts.
-        - Truncation detection.
-        - Balanced JSON extraction.
-        - Destination validation.
-        - Output normalization.
+    Responsibility:
+        Research ONE destination and return the
+        standardized research structure.
+
+    Worker 2 does NOT:
+        - generate destinations
+        - calculate total_budget
+        - perform rechecking
+        - search for images
+        - search maps
+        - access databases
+        - communicate with other workers
     """
+
+    OLLAMA_API_URL = os.getenv(
+        "OLLAMA_API_URL",
+        "https://ollama.com/api/chat"
+    )
 
     def __init__(self):
 
-        load_dotenv()
+        # =====================================================
+        # OLLAMA
+        # =====================================================
 
-        self.api_key = os.getenv("NVIDIA_API_KEY")
+        self.ollama_api_key = os.getenv(
+            "OLLAMA_API_KEY_WORKER"
+        )
 
-        if not self.api_key:
+        self.ollama_model = os.getenv(
+            "OLLAMA_WORKER2_MODEL",
+            "gemma4:latest"
+        )
+
+        if not self.ollama_api_key:
             raise ValueError(
-                "NVIDIA_API_KEY is not set in the .env file."
+                "OLLAMA_API_KEY_WORKER was not found."
             )
 
-        self.model = os.getenv(
-            "NVIDIA_WORKER2_MODEL",
-            "openai/gpt-oss-20b"
-        )
+        # =====================================================
+        # TAVILY
+        # =====================================================
 
-        self.base_url = os.getenv(
-            "NVIDIA_BASE_URL",
-            "https://integrate.api.nvidia.com/v1"
-        )
+        self.tavily = TavilyService()
 
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
-
-        self.max_attempts = 3
-
-    # ==========================================================
-    # MAIN RESEARCH
-    # ==========================================================
+    # =========================================================
+    # PUBLIC METHOD
+    # =========================================================
 
     def research(
         self,
-        destination,
-        country="",
-        trip_requirements=None
+        destination: str,
+        country: Optional[str] = None,
+        trip_days: int = 7,
+        starting_location: Optional[str] = None
     ) -> Dict[str, Any]:
 
-        destination = self._validate_destination(destination)
-        country = self._validate_country(country)
-        trip_requirements = self._validate_requirements(
-            trip_requirements
+        if not destination or not destination.strip():
+            raise ValueError(
+                "Destination cannot be empty."
+            )
+
+        destination = destination.strip()
+
+        if country:
+            country = country.strip()
+
+        # -----------------------------------------------------
+        # 1. Tavily research
+        # -----------------------------------------------------
+
+        search_results = self._search_destination(
+            destination=destination,
+            country=country,
+            starting_location=starting_location
         )
 
-        requirements_json = json.dumps(
-            trip_requirements,
-            ensure_ascii=False,
-            default=str
+        # -----------------------------------------------------
+        # 2. Ollama analysis
+        # -----------------------------------------------------
+
+        result = self._analyze_with_ollama(
+            destination=destination,
+            country=country,
+            search_results=search_results,
+            trip_days=trip_days,
+            starting_location=starting_location
         )
 
-        system_prompt = self._build_system_prompt(
-            destination,
-            country,
-            requirements_json
+        # -----------------------------------------------------
+        # 3. Validate
+        # -----------------------------------------------------
+
+        result = self._validate_result(
+            result=result,
+            destination=destination,
+            country=country
         )
 
-        user_prompt = self._build_user_prompt(
-            destination,
-            country,
-            requirements_json
-        )
+        return result
 
-        result = self._generate_valid_result(
-            system_prompt,
-            user_prompt
-        )
+    # =========================================================
+    # TAVILY RESEARCH
+    # =========================================================
 
-        return self._normalize_result(
-            result,
-            destination,
-            country
-        )
-
-    # ==========================================================
-    # SYSTEM PROMPT
-    # ==========================================================
-
-    @staticmethod
-    def _build_system_prompt(
-        destination,
-        country,
-        requirements_json
+    def _search_destination(
+        self,
+        destination: str,
+        country: Optional[str],
+        starting_location: Optional[str]
     ):
 
-        return f"""
-You are WANDERLUST WORKER AGENT 2.
+        if country:
+            location = f"{destination}, {country}"
+        else:
+            location = destination
 
-You are an independent destination research worker.
+        queries = [
+            f"{location} top major attractions things to do",
 
-ASSIGNED DESTINATION:
-{destination}
+            f"{location} average hotel accommodation "
+            f"cost per night",
 
-COUNTRY:
-{country}
+            f"{location} average food cost per day tourist",
 
-Research ONLY the assigned destination.
+            f"{location} average local transportation "
+            f"cost per day"
+        ]
 
-USER REQUIREMENTS:
-{requirements_json}
+        if starting_location:
+            queries.append(
+                f"{starting_location} to {location} "
+                f"travel cost flight train bus"
+            )
+        else:
+            queries.append(
+                f"{location} travel cost flight train bus"
+            )
 
-============================================================
-DESTINATION BOUNDARY
-============================================================
+        return self.tavily.search_many(
+            queries=queries,
+            max_results=5
+        )
 
-You MUST remain focused on {destination}.
+    # =========================================================
+    # OLLAMA
+    # =========================================================
 
-Do NOT:
+    def _analyze_with_ollama(
+        self,
+        destination: str,
+        country: Optional[str],
+        search_results,
+        trip_days: int,
+        starting_location: Optional[str]
+    ):
 
-- select destinations
-- compare destinations
-- rank destinations
-- recommend alternatives
-- research alternative destinations
-- create itineraries
-- make final travel decisions
+        research_text = self._format_search_results(
+            search_results
+        )
 
-A nearby place can be mentioned only when it is directly
-necessary context for {destination}, such as transportation
-or geography.
+        if starting_location:
+            origin = starting_location
+        else:
+            origin = "No starting location provided."
 
-============================================================
-RESEARCH
-============================================================
+        if country:
+            country_text = country
+        else:
+            country_text = "Determine from the research."
 
-Research:
+        system_prompt = """
+You are Worker 2 in a multi-agent travel research system.
 
-- overview
-- geography
-- destination character
-- nature
-- attractions
-- activities
-- culture
-- history
-- food
-- atmosphere
-- transportation
-- weather
-- seasonal conditions
-- accommodation
-- affordability
-- accessibility
-- safety and logistics
-- preference fit
-- strengths
-- limitations
-- uncertainties
-- evidence
+Your task is to analyze web research about ONE destination.
 
-Be comprehensive but concise.
+You are a research worker, not the final travel planner.
 
-Lists should normally contain 3-6 useful items.
+Return ONLY valid JSON.
 
-============================================================
-FACTUAL DISCIPLINE
-============================================================
+Do not return Markdown.
+Do not return ```json.
+Do not return explanations.
+Do not return reasoning.
+Do not return additional fields.
 
-Never fabricate:
+Use exactly this structure:
 
-- attractions
-- statistics
-- exact prices
-- schedules
-- opening hours
-- hotel availability
-- flight availability
-- current weather
-- events
-- visa rules
-- exchange rates
-- sources
+{
+    "destination": "string",
+    "country": "string",
+    "major_attractions": [
+        "string",
+        "string",
+        "string"
+    ],
+    "traveling_cost": number_or_null,
+    "residence_cost": number_or_null,
+    "average_food_cost": number_or_null,
+    "daily_average_travel_cost": number_or_null,
+    "summary": "string"
+}
 
-Do not pretend general knowledge is live information.
+Definitions:
 
-If information is uncertain, state that it is uncertain.
+destination:
+    The destination being researched.
 
-============================================================
-JSON OUTPUT
-============================================================
+country:
+    The country containing the destination.
 
-Return exactly ONE valid JSON object.
+major_attractions:
+    Exactly 3 major attractions.
 
-The output MUST:
+traveling_cost:
+    One-time estimated cost of reaching the destination
+    from the starting location.
 
-- begin with {{
-- end with }}
-- use double quotes
-- contain no Markdown
-- contain no code fences
-- contain no comments
-- contain no trailing commas
-- contain no explanation outside JSON
-- contain no extra top-level fields
+residence_cost:
+    Total accommodation cost for the requested trip.
 
-It MUST be parseable by:
+average_food_cost:
+    Average food cost PER DAY.
 
-json.loads()
+daily_average_travel_cost:
+    Average local transportation cost PER DAY.
 
-Keep descriptions concise enough to avoid response truncation.
+summary:
+    Concise useful description of the destination.
+
+Rules:
+
+- All monetary values must be numeric.
+- Do not put currency symbols inside numbers.
+- Use null when reliable information is unavailable.
+- Do not invent unsupported information.
+- Do not include total_budget.
+- Do not calculate a total budget.
+- Return exactly the fields shown above.
 """
 
-    # ==========================================================
-    # USER PROMPT
-    # ==========================================================
+        user_prompt = f"""
+DESTINATION
+===========
+{destination}
 
-    @staticmethod
-    def _build_user_prompt(
-        destination,
-        country,
-        requirements_json
-    ):
+COUNTRY
+=======
+{country_text}
 
-        return f"""
-Research ONLY:
+TRIP DURATION
+============
+{trip_days} days
 
-Destination: {destination}
-Country: {country}
+STARTING LOCATION
+=================
+{origin}
 
-User requirements:
+WEB RESEARCH
+============
 
-{requirements_json}
+{research_text}
 
-Return EXACTLY this JSON structure:
-
-{{
-  "worker": "worker_2",
-  "destination": "{destination}",
-  "country": "{country}",
-
-  "destination_overview": {{
-    "description": "",
-    "geography": "",
-    "general_character": "",
-    "known_for": []
-  }},
-
-  "destination_character": {{
-    "urban": null,
-    "suburban": null,
-    "rural": null,
-    "wilderness_oriented": null,
-    "coastal": null,
-    "mountainous": null,
-    "remote": null,
-    "highly_developed": null
-  }},
-
-  "nature": {{
-    "mountains": [],
-    "forests": [],
-    "lakes": [],
-    "rivers": [],
-    "beaches": [],
-    "wildlife": [],
-    "parks": [],
-    "scenic_landscapes": [],
-    "hiking": [],
-    "outdoor_experiences": []
-  }},
-
-  "attractions": [],
-
-  "activities": {{
-    "sightseeing": [],
-    "nature": [],
-    "hiking": [],
-    "photography": [],
-    "culture": [],
-    "history": [],
-    "food": [],
-    "relaxation": [],
-    "adventure": [],
-    "entertainment": [],
-    "nightlife": [],
-    "shopping": []
-  }},
-
-  "culture": {{
-    "description": "",
-    "traditions": [],
-    "cultural_experiences": []
-  }},
-
-  "history": {{
-    "description": "",
-    "historical_sites": [],
-    "historical_significance": []
-  }},
-
-  "food": {{
-    "description": "",
-    "regional_cuisine": [],
-    "food_experiences": []
-  }},
-
-  "atmosphere": {{
-    "description": "",
-    "peacefulness": "",
-    "crowd_level": "",
-    "tourism_intensity": "",
-    "urban_intensity": ""
-  }},
-
-  "transportation": {{
-    "getting_there": [],
-    "airports": [],
-    "trains": [],
-    "buses": [],
-    "roads": [],
-    "public_transportation": [],
-    "taxis": [],
-    "rideshare": [],
-    "rental_cars": [],
-    "walking": [],
-    "cycling": [],
-    "car_dependence": "",
-    "general_ease": ""
-  }},
-
-  "weather": {{
-    "climate": "",
-    "temperature": "",
-    "rainfall": "",
-    "humidity": "",
-    "snow": "",
-    "extreme_weather": []
-  }},
-
-  "seasonal_conditions": {{
-    "spring": "",
-    "summer": "",
-    "autumn": "",
-    "winter": ""
-  }},
-
-  "accommodation": {{
-    "general_character": "",
-    "types": [],
-    "availability_notes": [],
-    "uncertainties": []
-  }},
-
-  "affordability": {{
-    "overall_level": "",
-    "description": "",
-    "confidence": ""
-  }},
-
-  "accessibility": {{
-    "general": "",
-    "public_transport": "",
-    "walking": "",
-    "terrain": "",
-    "remote_area_limitations": [],
-    "mobility_considerations": []
-  }},
-
-  "safety_and_logistics": {{
-    "considerations": [],
-    "weather_risks": [],
-    "terrain_risks": [],
-    "transportation_risks": [],
-    "seasonal_disruptions": []
-  }},
-
-  "preference_fit": {{
-    "matches": [],
-    "partial_matches": [],
-    "conflicts": []
-  }},
-
-  "strengths": [],
-  "limitations": [],
-  "uncertainties": [],
-  "evidence": [],
-  "worker_summary": ""
-}}
-
-Do not add fields.
-
-Do not remove fields.
-
-Do not research another destination.
+Using the supplied web research, produce the
+required standardized JSON object.
 
 Return ONLY the JSON object.
 """
 
-    # ==========================================================
-    # GENERATION + RETRIES
-    # ==========================================================
+        headers = {
+            "Authorization": (
+                f"Bearer {self.ollama_api_key}"
+            ),
+            "Content-Type": "application/json"
+        }
 
-    def _generate_valid_result(
+        payload = {
+            "model": self.ollama_model,
+
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+
+            "format": "json",
+            "stream": False,
+
+            "options": {
+                "temperature": 0.1
+            }
+        }
+
+        response = requests.post(
+            self.OLLAMA_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        try:
+            content = (
+                data["message"]["content"]
+            )
+
+        except (
+            KeyError,
+            TypeError
+        ):
+            raise RuntimeError(
+                "Unexpected Ollama API response."
+            )
+
+        return self._extract_json(content)
+
+    # =========================================================
+    # FORMAT SEARCH RESULTS
+    # =========================================================
+
+    def _format_search_results(
         self,
-        system_prompt,
-        user_prompt
+        search_results
     ):
 
-        last_error = None
+        sections = []
 
-        for attempt in range(1, self.max_attempts + 1):
+        for search in search_results:
+
+            section = [
+                f"SEARCH QUERY: {search['query']}"
+            ]
+
+            for index, result in enumerate(
+                search["results"],
+                start=1
+            ):
+
+                section.append(
+                    f"""
+RESULT {index}
+Title: {result.get("title", "")}
+URL: {result.get("url", "")}
+Content: {result.get("content", "")}
+"""
+                )
+
+            sections.append(
+                "\n".join(section)
+            )
+
+        return (
+            "\n\n====================\n\n"
+            .join(sections)
+        )
+
+    # =========================================================
+    # JSON EXTRACTION
+    # =========================================================
+
+    def _extract_json(
+        self,
+        content
+    ):
+
+        if not content:
+            raise RuntimeError(
+                "Worker 2 received an empty Ollama response."
+            )
+
+        content = content.strip()
+
+        # -----------------------------------------------------
+        # Remove Markdown code fences if returned.
+        # -----------------------------------------------------
+
+        if content.startswith("```"):
+
+            lines = content.splitlines()
+
+            lines = lines[1:]
+
+            if (
+                lines
+                and lines[-1].strip() == "```"
+            ):
+                lines = lines[:-1]
+
+            content = "\n".join(
+                lines
+            ).strip()
+
+        # -----------------------------------------------------
+        # Direct JSON parsing
+        # -----------------------------------------------------
+
+        try:
+
+            result = json.loads(
+                content
+            )
+
+        except json.JSONDecodeError:
+
+            # -------------------------------------------------
+            # Attempt to recover JSON object.
+            # -------------------------------------------------
+
+            start = content.find("{")
+            end = content.rfind("}")
+
+            if start == -1 or end == -1:
+
+                raise RuntimeError(
+                    "Worker 2 could not parse Ollama JSON."
+                )
 
             try:
 
-                if attempt == 1:
-
-                    retry_instruction = ""
-
-                elif attempt == 2:
-
-                    retry_instruction = """
-Your previous response was invalid JSON.
-
-Regenerate the complete report.
-
-Make the JSON syntactically correct.
-Pay special attention to commas, quotes, braces and brackets.
-
-Return ONLY JSON.
-"""
-
-                else:
-
-                    retry_instruction = """
-Your previous response could not be parsed.
-
-Generate a NEW concise version of the complete research.
-
-Do not explain anything.
-Do not use Markdown.
-Do not use code fences.
-Return ONLY valid JSON.
-
-Shorten descriptions and lists so the response cannot be
-truncated.
-"""
-
-                messages = [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            user_prompt
-                            + "\n\n"
-                            + retry_instruction
-                        )
-                    }
-                ]
-
-                kwargs = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0,
-                    "max_tokens": 7000,
-                    "response_format": {
-                        "type": "json_object"
-                    }
-                }
-
-                try:
-
-                    response = self.client.chat.completions.create(
-                        **kwargs
-                    )
-
-                except Exception as json_mode_error:
-
-                    error_text = str(json_mode_error).lower()
-
-                    if (
-                        "response_format" not in error_text
-                        and "json" not in error_text
-                        and "unsupported" not in error_text
-                        and "400" not in error_text
-                    ):
-                        raise
-
-                    kwargs.pop("response_format", None)
-
-                    response = self.client.chat.completions.create(
-                        **kwargs
-                    )
-
-                if not response.choices:
-                    raise ValueError(
-                        "Worker 2 received no response choices."
-                    )
-
-                choice = response.choices[0]
-
-                content = choice.message.content
-
-                if not content:
-                    raise ValueError(
-                        "Worker 2 returned an empty response."
-                    )
-
-                finish_reason = getattr(
-                    choice,
-                    "finish_reason",
-                    None
+                result = json.loads(
+                    content[start:end + 1]
                 )
 
-                if finish_reason == "length":
-                    raise ValueError(
-                        "Worker 2 response was truncated."
-                    )
+            except json.JSONDecodeError as exc:
 
-                result = self._parse_json(content)
+                raise RuntimeError(
+                    "Worker 2 received malformed JSON."
+                ) from exc
 
-                if not isinstance(result, dict):
-                    raise ValueError(
-                        "Worker 2 JSON root must be an object."
-                    )
+        if not isinstance(result, dict):
 
-                return result
-
-            except Exception as error:
-
-                last_error = error
-
-                if attempt < self.max_attempts:
-                    continue
-
-        raise ValueError(
-            "Worker 2 failed to produce valid JSON after "
-            f"{self.max_attempts} attempts.\n\n"
-            f"Last error: {last_error}"
-        )
-
-    # ==========================================================
-    # JSON PARSER
-    # ==========================================================
-
-    @staticmethod
-    def _parse_json(content):
-
-        if not isinstance(content, str):
-            raise ValueError(
-                "Worker 2 response must be a string."
+            raise RuntimeError(
+                "Worker 2 expected a JSON object."
             )
 
-        text = content.strip()
+        return result
 
-        if text.startswith("```"):
+    # =========================================================
+    # VALIDATION
+    # =========================================================
 
-            lines = text.splitlines()
-
-            if lines and lines[0].strip().startswith("```"):
-                lines = lines[1:]
-
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-
-            text = "\n".join(lines).strip()
-
-        try:
-
-            parsed = json.loads(text)
-
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Worker 2 JSON root is not an object."
-                )
-
-            return parsed
-
-        except json.JSONDecodeError:
-            pass
-
-        candidate = WorkerAgent2._extract_json_object(text)
-
-        if candidate is None:
-            raise ValueError(
-                "Worker 2 did not return a recoverable JSON object."
-            )
-
-        try:
-
-            parsed = json.loads(candidate)
-
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Worker 2 recovered JSON root is not an object."
-                )
-
-            return parsed
-
-        except json.JSONDecodeError as error:
-
-            raise ValueError(
-                f"Worker 2 returned malformed JSON: {error}"
-            ) from error
-
-    @staticmethod
-    def _extract_json_object(text):
-
-        start = text.find("{")
-
-        if start == -1:
-            return None
-
-        depth = 0
-        in_string = False
-        escape = False
-
-        for index in range(start, len(text)):
-
-            char = text[index]
-
-            if in_string:
-
-                if escape:
-                    escape = False
-                    continue
-
-                if char == "\\":
-                    escape = True
-                    continue
-
-                if char == '"':
-                    in_string = False
-
-                continue
-
-            if char == '"':
-                in_string = True
-                continue
-
-            if char == "{":
-                depth += 1
-
-            elif char == "}":
-
-                depth -= 1
-
-                if depth == 0:
-                    return text[start:index + 1]
-
-        return None
-
-    # ==========================================================
-    # NORMALIZATION
-    # ==========================================================
-
-    def _normalize_result(
+    def _validate_result(
         self,
         result,
         destination,
         country
     ):
 
-        if not isinstance(result, dict):
-            raise ValueError(
-                "Worker 2 result must be a dictionary."
-            )
+        required_fields = [
+            "destination",
+            "country",
+            "major_attractions",
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost",
+            "summary"
+        ]
 
-        returned_destination = result.get("destination")
+        # -----------------------------------------------------
+        # Check required fields
+        # -----------------------------------------------------
 
-        if returned_destination:
+        for field in required_fields:
 
-            if (
-                str(returned_destination).strip().lower()
-                != destination.strip().lower()
-            ):
-                raise ValueError(
-                    "Worker 2 researched a different destination."
+            if field not in result:
+
+                raise RuntimeError(
+                    f"Worker 2 missing field: {field}"
                 )
 
-        result["worker"] = "worker_2"
+        # -----------------------------------------------------
+        # Destination comes from ResearchAgent.
+        # -----------------------------------------------------
+
         result["destination"] = destination
-        result["country"] = country
 
-        defaults = {
-            "destination_overview": {},
-            "destination_character": {},
-            "nature": {},
-            "attractions": [],
-            "activities": {},
-            "culture": {},
-            "history": {},
-            "food": {},
-            "atmosphere": {},
-            "transportation": {},
-            "weather": {},
-            "seasonal_conditions": {},
-            "accommodation": {},
-            "affordability": {},
-            "accessibility": {},
-            "safety_and_logistics": {},
-            "preference_fit": {},
-            "strengths": [],
-            "limitations": [],
-            "uncertainties": [],
-            "evidence": [],
-            "worker_summary": ""
-        }
+        # -----------------------------------------------------
+        # Country comes from ResearchAgent when available.
+        # -----------------------------------------------------
 
-        for key, default_value in defaults.items():
+        if country:
+            result["country"] = country
 
-            if key not in result or result[key] is None:
-                result[key] = default_value
+        # -----------------------------------------------------
+        # Attractions
+        # -----------------------------------------------------
+
+        attractions = result[
+            "major_attractions"
+        ]
+
+        if not isinstance(
+            attractions,
+            list
+        ):
+
+            raise RuntimeError(
+                "major_attractions must be a list."
+            )
+
+        if len(attractions) != 3:
+
+            raise RuntimeError(
+                "Worker 2 must return exactly "
+                "3 attractions."
+            )
+
+        # -----------------------------------------------------
+        # Numeric fields
+        # -----------------------------------------------------
+
+        numeric_fields = [
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost"
+        ]
+
+        for field in numeric_fields:
+
+            if result[field] is None:
+                continue
+
+            try:
+
+                result[field] = float(
+                    result[field]
+                )
+
+            except (
+                ValueError,
+                TypeError
+            ):
+
+                result[field] = None
+
+        # -----------------------------------------------------
+        # Compatibility protection.
+        #
+        # Older versions of Worker 2 calculated total_budget.
+        # RecheckAgent does not need it at this stage.
+        # -----------------------------------------------------
+
+        result.pop(
+            "total_budget",
+            None
+        )
 
         return result
-
-    # ==========================================================
-    # INPUT VALIDATION
-    # ==========================================================
-
-    @staticmethod
-    def _validate_destination(destination):
-
-        if not isinstance(destination, str):
-            raise TypeError(
-                "destination must be a string."
-            )
-
-        destination = destination.strip()
-
-        if not destination:
-            raise ValueError(
-                "destination cannot be empty."
-            )
-
-        return destination
-
-    @staticmethod
-    def _validate_country(country):
-
-        if country is None:
-            return ""
-
-        if not isinstance(country, str):
-            country = str(country)
-
-        return country.strip()
-
-    @staticmethod
-    def _validate_requirements(trip_requirements):
-
-        if trip_requirements is None:
-            return {}
-
-        if not isinstance(trip_requirements, dict):
-            raise TypeError(
-                "trip_requirements must be a dictionary."
-            )
-
-        return trip_requirements
-
-
-# ==============================================================
-# DIRECT TEST
-# ==============================================================
-
-if __name__ == "__main__":
-
-    print("=" * 70)
-    print("WORKER 2 DIRECT TEST")
-    print("=" * 70)
-
-    worker = WorkerAgent2()
-
-    print("Model:", worker.model)
-    print("Base URL:", worker.base_url)
-
-    result = worker.research(
-        destination="Kanazawa",
-        country="Japan",
-        trip_requirements={
-            "interests": [
-                "nature",
-                "culture",
-                "quiet places"
-            ],
-            "avoid": [
-                "very crowded cities"
-            ]
-        }
-    )
-
-    print()
-    print("SUCCESS")
-    print("=" * 70)
-
-    print(
-        json.dumps(
-            result,
-            indent=2,
-            ensure_ascii=False
-        )
-    )

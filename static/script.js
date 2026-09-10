@@ -1,30 +1,112 @@
 /* ============================================================
-   WANDERLUST — FRONTEND CONTROLLER
+   WANDERLUST
+   NEW FRONTEND CONTROLLER
+   ============================================================
+
+   NEW ARCHITECTURE
+
+       index.html
+            |
+            v
+       script.js
+            |
+            v
+         app.py
+            |
+            v
+         main.py
+            |
+            +-------------------------+
+            |                         |
+            v                         v
+       MoodAgent                TravelAgent
+                                   |
+                              Gemini selects
+                              EXACTLY 3
+                                   |
+                         +---------+---------+
+                         |                   |
+                         v                   v
+                  ResearchAgent          Pexels
+                         |
+              +----------+----------+
+              |          |          |
+              v          v          v
+           Worker 1   Worker 2   Worker 3
+              |          |          |
+             D1         D2         D3
+              |          |          |
+              +----------+----------+
+                         |
+                    Gemma QC
+                         |
+                         v
+                 Enriched results
+                         |
+                         v
+                       main.py
+                         |
+                         v
+                       app.py
+                         |
+                         v
+                     script.js
+                         |
+                         v
+                    index.html
+
+
+   IMPORTANT:
+
+   The frontend DOES NOT know about:
+       - Worker 1 models
+       - Worker 2 models
+       - Worker 3 models
+       - Gemma
+       - ResearchAgent internals
+       - Gemini internals
+
+   It only receives the final three destination options.
+*/
+
+
+/* ============================================================
+   GLOBAL STATE
    ============================================================ */
 
 let currentTrip = null;
+
 let basicTripData = null;
+
 let currentTripId = null;
 
 let tripStartInProgress = false;
-let initialChatEventHandled = false;
+
+let tripChatProcessing = false;
+
+let chatStarted = false;
+
+
+/* ============================================================
+   LOCAL STORAGE
+   ============================================================ */
 
 const STORAGE_KEYS = {
-    tripId: "wanderlust_trip_id",
-    basicTrip: "wanderlust_basic_trip"
+
+    tripId:
+        "wanderlust_trip_id",
+
+    basicTrip:
+        "wanderlust_basic_trip"
+
 };
 
 
 /* ============================================================
-   API
-   FRONTEND → app.py ONLY
+   API CONNECTOR
    ============================================================ */
 
 const API = {
-
-    /* --------------------------------------------------------
-       Generic request handler
-       -------------------------------------------------------- */
 
     async request(
         endpoint,
@@ -33,28 +115,31 @@ const API = {
     ) {
 
         const options = {
-            method: method,
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
+
+            method:
+                method,
+
+            headers: {}
+
         };
 
 
         if (data !== null) {
 
+            options.headers[
+                "Content-Type"
+            ] = "application/json";
+
             options.body =
-                JSON.stringify(data);
+                JSON.stringify(
+                    data
+                );
+
         }
 
 
-        console.log(
-            `WANDERLUST → ${method} ${endpoint}`,
-            data
-        );
-
-
         let response;
+
 
         try {
 
@@ -66,18 +151,14 @@ const API = {
 
         } catch (error) {
 
-            console.error(
-                "NETWORK ERROR:",
-                error
+            throw new Error(
+                "Unable to connect to the Flask server."
             );
 
-            throw new Error(
-                "Could not connect to the Flask backend."
-            );
         }
 
 
-        let payload = null;
+        let payload;
 
 
         try {
@@ -85,74 +166,36 @@ const API = {
             payload =
                 await response.json();
 
-        } catch {
+        } catch (error) {
 
             throw new Error(
-                `Flask returned an invalid response (${response.status}).`
+                "The Flask server returned an invalid response."
             );
+
         }
 
-
-        console.log(
-            `WANDERLUST ← ${response.status} ${endpoint}`,
-            payload
-        );
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                payload?.message ||
-                payload?.error ||
-                `Backend request failed (${response.status}).`
-            );
-        }
-
-
-        /*
-         * Most Wanderlust endpoints use:
-         *
-         * {
-         *     status: "success",
-         *     data: ...
-         * }
-         *
-         * But we also tolerate a direct JSON response.
-         */
 
         if (
-            payload &&
-            payload.status &&
+            !response.ok ||
             payload.status !== "success"
         ) {
 
             throw new Error(
                 payload.message ||
-                payload.error ||
-                "Backend request failed."
+                "The backend request failed."
             );
+
         }
 
 
-        if (
-            payload &&
-            Object.prototype.hasOwnProperty.call(
-                payload,
-                "data"
-            )
-        ) {
+        return payload.data;
 
-            return payload.data;
-        }
-
-
-        return payload;
     },
 
 
     /* ========================================================
        HEALTH
-       ======================================================== */
+    ======================================================== */
 
     health() {
 
@@ -160,14 +203,15 @@ const API = {
             "/api/health",
             "GET"
         );
+
     },
 
 
     /* ========================================================
-       BASIC INFORMATION
-       ======================================================== */
+       BASIC TRIP INFORMATION
+    ======================================================== */
 
-    saveBasicTrip(
+    saveBasicInformation(
         basicInformation
     ) {
 
@@ -179,6 +223,7 @@ const API = {
                     basicInformation
             }
         );
+
     },
 
 
@@ -190,63 +235,45 @@ const API = {
             `/api/trip/basic/${tripId}`,
             "GET"
         );
+
     },
 
 
     /* ========================================================
-       DESTINATIONS
-       ======================================================== */
-
-    homeDestinations() {
-
-        return this.request(
-            "/api/destinations/home",
-            "GET"
-        );
-    },
-
-
-    randomDestinations(
-        limit = 6
-    ) {
-
-        return this.request(
-            `/api/destinations/random?limit=${limit}`,
-            "GET"
-        );
-    },
-
-
-    searchDestination(
-        query
-    ) {
-
-        return this.request(
-            "/api/destinations/search",
-            "POST",
-            {
-                query:
-                    String(query || "").trim()
-            }
-        );
-    },
-
-
-    /* ========================================================
-       AI TRIP PLANNER
-       ======================================================== */
+       START NEW AI TRIP
+    ======================================================== */
 
     startTrip(
-        tripData
+        tripId,
+        userInput
     ) {
 
         return this.request(
+
             "/api/trip/start",
+
             "POST",
-            tripData
+
+            {
+
+                trip_id:
+                    tripId,
+
+                user_input:
+                    String(
+                        userInput
+                    )
+
+            }
+
         );
+
     },
 
+
+    /* ========================================================
+       UPDATE TRIP
+    ======================================================== */
 
     updateTrip(
         tripId,
@@ -254,20 +281,31 @@ const API = {
     ) {
 
         return this.request(
+
             "/api/trip/update",
+
             "POST",
+
             {
+
                 trip_id:
-                    Number(tripId),
+                    tripId,
 
                 change_request:
                     String(
-                        changeRequest || ""
-                    ).trim()
+                        changeRequest
+                    )
+
             }
+
         );
+
     },
 
+
+    /* ========================================================
+       SELECT DESTINATION
+    ======================================================== */
 
     selectTrip(
         tripId,
@@ -275,122 +313,210 @@ const API = {
     ) {
 
         return this.request(
+
             "/api/trip/select",
+
             "POST",
+
             {
+
                 trip_id:
-                    Number(tripId),
+                    tripId,
 
                 selected_index:
-                    Number(selectedIndex)
+                    selectedIndex
+
             }
+
         );
+
     },
 
+
+    /* ========================================================
+       STATUS
+    ======================================================== */
+
+    getTripStatus(
+        tripId
+    ) {
+
+        return this.request(
+
+            "/api/trip/status",
+
+            "POST",
+
+            {
+
+                trip_id:
+                    tripId
+
+            }
+
+        );
+
+    },
+
+
+    /* ========================================================
+       CONFIRM
+    ======================================================== */
 
     confirmTrip(
         tripId
     ) {
 
         return this.request(
+
             "/api/trip/confirm",
+
             "POST",
+
             {
+
                 trip_id:
-                    Number(tripId)
+                    tripId
+
             }
+
         );
+
     },
 
+
+    /* ========================================================
+       CANCEL
+    ======================================================== */
 
     cancelTrip(
         tripId
     ) {
 
         return this.request(
+
             "/api/trip/cancel",
+
             "POST",
+
             {
+
                 trip_id:
-                    Number(tripId)
+                    tripId
+
             }
+
         );
+
     },
 
+
+    /* ========================================================
+       DELETE
+    ======================================================== */
 
     deleteTrip(
         tripId
     ) {
 
         return this.request(
+
             "/api/trip/delete",
+
             "POST",
+
             {
+
                 trip_id:
-                    Number(tripId)
+                    tripId
+
             }
+
         );
+
+    },
+
+
+    /* ========================================================
+       RANDOM DESTINATIONS
+    ======================================================== */
+
+    randomDestinations(
+        limit = 6
+    ) {
+
+        return this.request(
+
+            `/api/destinations/random?limit=${limit}`,
+
+            "GET"
+
+        );
+
+    },
+
+
+    /* ========================================================
+       DESTINATION SEARCH
+    ======================================================== */
+
+    searchDestination(
+        query
+    ) {
+
+        return this.request(
+
+            "/api/destinations/search",
+
+            "POST",
+
+            {
+
+                query:
+                    String(
+                        query
+                    )
+
+            }
+
+        );
+
     }
 
 };
 
 
 /* ============================================================
-   HELPERS
+   BASIC DOM HELPERS
    ============================================================ */
 
-function value(id) {
+function value(
+    id
+) {
 
     const element =
-        document.getElementById(id);
+        document.getElementById(
+            id
+        );
 
 
     if (!element) {
+
         return "";
+
     }
 
 
     return String(
         element.value || ""
     ).trim();
+
 }
 
 
-/* ------------------------------------------------------------
-   HTML escaping
-   ------------------------------------------------------------ */
-
-function escapeHtml(text) {
-
-    return String(text ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
-
-
-/* ------------------------------------------------------------
-   Money
-   ------------------------------------------------------------ */
-
-function formatMoney(number) {
-
-    return Number(number || 0)
-        .toLocaleString(
-            "en-CA",
-            {
-                style: "currency",
-                currency: "CAD"
-            }
-        );
-}
-
-
-/* ------------------------------------------------------------
-   Message helper
-   ------------------------------------------------------------ */
+/* ============================================================
+   SET MESSAGE
+   ============================================================ */
 
 function setMessage(
     id,
@@ -399,154 +525,110 @@ function setMessage(
 ) {
 
     const element =
-        document.getElementById(id);
+        document.getElementById(
+            id
+        );
 
 
     if (!element) {
+
         return;
+
     }
 
 
     element.textContent =
-        message || "";
+        String(
+            message || ""
+        );
 
 
     element.style.display =
-        visible && message
+        visible
             ? "block"
             : "none";
+
 }
 
 
 /* ============================================================
-   RESPONSE NORMALIZATION
+   ESCAPE HTML
    ============================================================ */
 
-/*
- * Flask may return:
- *
- * [
- *     {...},
- *     {...}
- * ]
- *
- * OR:
- *
- * {
- *     destinations: [...]
- * }
- *
- * OR:
- *
- * {
- *     results: [...]
- * }
- *
- * OR:
- *
- * {
- *     data: [...]
- * }
- *
- * This helper prevents valid backend data
- * from being incorrectly displayed as empty.
- */
-
-function normalizeDestinations(
-    response
+function escapeHtml(
+    text
 ) {
 
-    if (Array.isArray(response)) {
+    return String(
+        text ?? ""
+    )
 
-        return response;
-    }
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+
+}
 
 
-    if (!response) {
+/* ============================================================
+   FORMAT MONEY
+   ============================================================ */
 
-        return [];
-    }
+function formatMoney(
+    number
+) {
+
+    const amount =
+        Number(
+            number || 0
+        );
 
 
     if (
-        Array.isArray(
-            response.destinations
+        !Number.isFinite(
+            amount
         )
     ) {
 
-        return response.destinations;
+        return "$0.00";
+
     }
 
 
-    if (
-        Array.isArray(
-            response.results
-        )
-    ) {
+    return amount.toLocaleString(
+        "en-CA",
+        {
 
-        return response.results;
-    }
+            style:
+                "currency",
 
+            currency:
+                "CAD"
 
-    if (
-        Array.isArray(
-            response.data
-        )
-    ) {
-
-        return response.data;
-    }
-
-
-    if (
-        response.destination
-    ) {
-
-        return [
-            response.destination
-        ];
-    }
-
-
-    if (
-        response.result
-    ) {
-
-        if (
-            Array.isArray(
-                response.result
-            )
-        ) {
-
-            return response.result;
         }
+    );
 
-
-        return [
-            response.result
-        ];
-    }
-
-
-    /*
-     * A single destination object.
-     */
-
-    if (
-        typeof response === "object" &&
-        (
-            response.name ||
-            response.destination_name
-        )
-    ) {
-
-        return [
-            response
-        ];
-    }
-
-
-    return [];
 }
 
 
@@ -559,79 +641,66 @@ function showPage(
 ) {
 
     document
-        .querySelectorAll(".page")
+        .querySelectorAll(
+            ".page"
+        )
         .forEach(
             page => {
 
                 page.classList.remove(
                     "active"
                 );
+
             }
         );
 
 
     const target =
         document.getElementById(
-            `page-${pageName}`
-        );
-
-
-    if (!target) {
-
-        console.error(
-            "Page does not exist:",
+            "page-" +
             pageName
         );
 
-        return;
+
+    if (target) {
+
+        target.classList.add(
+            "active"
+        );
+
     }
 
 
-    target.classList.add(
-        "active"
-    );
-
-
     document
-        .querySelectorAll(".nav-button")
+        .querySelectorAll(
+            ".nav-button"
+        )
         .forEach(
             button => {
 
                 button.classList.toggle(
+
                     "active",
+
                     button.dataset.page ===
                     pageName
+
                 );
+
             }
         );
 
 
     window.scrollTo({
-        top: 0,
-        behavior: "smooth"
+
+        top:
+            0,
+
+        behavior:
+            "smooth"
+
     });
 
-
-    /*
-     * Page-specific loading.
-     */
-
-    if (pageName === "home") {
-
-        loadHomeDestinations();
-    }
-
-
-    if (pageName === "random") {
-
-        loadRandomDestinations();
-    }
-
-
-    if (pageName === "basic") {
-
-        loadBasicInformation();
-    }
 }
 
 
@@ -644,44 +713,99 @@ function detectDepartureCountry(
 ) {
 
     const lower =
-        String(text || "")
+        String(
+            text || ""
+        )
             .toLowerCase();
 
 
     const countries = [
 
-        ["canada", "Canada"],
-        ["united states", "United States"],
-        ["usa", "United States"],
-        ["india", "India"],
-        ["japan", "Japan"],
-        ["france", "France"],
-        ["germany", "Germany"],
-        ["italy", "Italy"],
-        ["switzerland", "Switzerland"],
-        ["australia", "Australia"],
-        ["new zealand", "New Zealand"],
-        ["united kingdom", "United Kingdom"],
-        ["uk", "United Kingdom"]
+        [
+            "canada",
+            "Canada"
+        ],
+
+        [
+            "united states",
+            "United States"
+        ],
+
+        [
+            "usa",
+            "United States"
+        ],
+
+        [
+            "india",
+            "India"
+        ],
+
+        [
+            "japan",
+            "Japan"
+        ],
+
+        [
+            "france",
+            "France"
+        ],
+
+        [
+            "germany",
+            "Germany"
+        ],
+
+        [
+            "italy",
+            "Italy"
+        ],
+
+        [
+            "switzerland",
+            "Switzerland"
+        ],
+
+        [
+            "australia",
+            "Australia"
+        ],
+
+        [
+            "new zealand",
+            "New Zealand"
+        ],
+
+        [
+            "united kingdom",
+            "United Kingdom"
+        ]
 
     ];
 
 
     for (
-        const [keyword, country]
+        const [
+            needle,
+            country
+        ]
         of countries
     ) {
 
         if (
-            lower.includes(keyword)
+            lower.includes(
+                needle
+            )
         ) {
 
             return country;
+
         }
+
     }
 
 
-    const canadianCodes = [
+    const canadianProvinceCodes = [
 
         "ab",
         "bc",
@@ -702,22 +826,35 @@ function detectDepartureCountry(
 
     const parts =
         lower
-            .split(/[, ]+/)
-            .filter(Boolean);
+            .split(
+                /[, ]+/
+            )
+            .map(
+                item =>
+                    item.trim()
+            )
+            .filter(
+                Boolean
+            );
 
 
     if (
         parts.some(
-            part =>
-                canadianCodes.includes(part)
+            item =>
+                canadianProvinceCodes
+                    .includes(
+                        item
+                    )
         )
     ) {
 
         return "Canada";
+
     }
 
 
     return "";
+
 }
 
 
@@ -728,8 +865,11 @@ function detectDepartureCountry(
 function getTripScope() {
 
     return document.querySelector(
+
         'input[name="trip_scope"]:checked'
+
     )?.value || "domestic";
+
 }
 
 
@@ -739,10 +879,8 @@ function getTripScope() {
 
 function updateCountryField() {
 
-    const countryInput =
-        document.getElementById(
-            "country"
-        );
+    const scope =
+        getTripScope();
 
 
     const countryField =
@@ -751,44 +889,54 @@ function updateCountryField() {
         );
 
 
-    const countryHint =
+    const countryInput =
+        document.getElementById(
+            "country"
+        );
+
+
+    const hint =
         document.getElementById(
             "countryHint"
         );
 
 
     if (
-        !countryInput ||
-        !countryField
+        !countryField ||
+        !countryInput
     ) {
 
         return;
+
     }
 
 
-    const detected =
+    const detectedCountry =
         detectDepartureCountry(
-            value("departure_location")
+            value(
+                "departure_location"
+            )
         );
 
 
     if (
-        getTripScope() === "domestic" &&
-        detected
+        scope === "domestic" &&
+        detectedCountry
     ) {
 
         countryInput.value =
-            detected;
+            detectedCountry;
 
 
         countryField.style.display =
             "none";
 
 
-        if (countryHint) {
+        if (hint) {
 
-            countryHint.textContent =
+            hint.textContent =
                 "Departure country detected automatically.";
+
         }
 
     } else {
@@ -797,24 +945,23 @@ function updateCountryField() {
             "flex";
 
 
-        if (countryHint) {
+        if (hint) {
 
-            countryHint.textContent =
+            hint.textContent =
                 "";
+
         }
+
     }
+
 }
 
 
 /* ============================================================
-   BASIC INFORMATION
+   BUILD BASIC TRIP DATA
    ============================================================ */
 
 function buildBasicTripData() {
-
-    const other =
-        value("other");
-
 
     return {
 
@@ -827,70 +974,74 @@ function buildBasicTripData() {
             getTripScope(),
 
         country:
-            value("country") ||
-            null,
+            value(
+                "country"
+            ) || null,
 
         region:
             null,
 
         travelers:
             Number(
-                value("travelers")
+                value(
+                    "travelers"
+                )
             ),
 
         duration_days:
             Number(
-                value("duration_days")
+                value(
+                    "duration_days"
+                )
             ),
 
         travel_dates:
-            value("travel_dates"),
+            value(
+                "travel_dates"
+            ),
 
         maximum_total_travel_time:
             value(
                 "maximum_total_travel_time"
-            ) ||
-            "no preference",
+            ),
 
         maximum_distance:
             value(
                 "maximum_distance"
-            ) ||
-            "no preference",
+            ),
 
         transportation_preference:
             value(
                 "transportation_preference"
-            ) ||
-            "no preference",
+            ),
 
         accommodation_preference:
             value(
                 "accommodation_preference"
-            ) ||
-            "no preference",
+            ),
 
         safety_requirement:
             value(
                 "safety_requirement"
-            ) ||
-            "none",
-
-        other:
-            other
-                ? [other]
-                : [],
+            ),
 
         budget:
             Number(
-                value("budget")
-            )
+                value(
+                    "budget"
+                )
+            ),
+
+        currency:
+            "CAD"
+
     };
+
 }
 
 
 /* ============================================================
-   BASIC INFORMATION VALIDATION
+   BASIC FORM VALIDATION
    ============================================================ */
 
 function validateBasicTripData(
@@ -901,35 +1052,32 @@ function validateBasicTripData(
         !data.departure_location
     ) {
 
-        return (
-            "Please enter your departure location."
-        );
+        return "Please enter your departure location.";
+
     }
 
 
     if (
-        !Number.isInteger(
+        !Number.isFinite(
             data.travelers
         ) ||
         data.travelers < 1
     ) {
 
-        return (
-            "Number of travelers must be at least 1."
-        );
+        return "Please enter a valid number of travelers.";
+
     }
 
 
     if (
-        !Number.isInteger(
+        !Number.isFinite(
             data.duration_days
         ) ||
         data.duration_days < 1
     ) {
 
-        return (
-            "Trip duration must be at least 1 day."
-        );
+        return "Please enter a valid trip duration.";
+
     }
 
 
@@ -937,9 +1085,8 @@ function validateBasicTripData(
         !data.travel_dates
     ) {
 
-        return (
-            "Please enter your travel dates."
-        );
+        return "Please enter your travel dates.";
+
     }
 
 
@@ -950,13 +1097,13 @@ function validateBasicTripData(
         data.budget <= 0
     ) {
 
-        return (
-            "Please enter a valid travel budget."
-        );
+        return "Please enter a valid travel budget.";
+
     }
 
 
     return null;
+
 }
 
 
@@ -970,173 +1117,89 @@ async function saveBasicInformation() {
         buildBasicTripData();
 
 
-    const error =
+    const validationError =
         validateBasicTripData(
             data
         );
 
 
-    if (error) {
+    if (validationError) {
 
         setMessage(
             "basicError",
-            error
+            validationError
         );
 
-        return false;
+        return null;
+
     }
-
-
-    const button =
-        document.getElementById(
-            "continueToPlanningButton"
-        );
-
-
-    if (button) {
-
-        button.disabled = true;
-
-        button.textContent =
-            "SAVING...";
-    }
-
-
-    setMessage(
-        "basicError",
-        "",
-        false
-    );
-
-
-    setMessage(
-        "basicSaved",
-        "Saving your trip information..."
-    );
 
 
     try {
 
-        console.log(
-            "Saving basic trip information:",
-            data
+        setMessage(
+            "basicError",
+            "",
+            false
         );
 
 
         const result =
-            await API.saveBasicTrip(
+            await API.saveBasicInformation(
                 data
             );
 
 
-        console.log(
-            "Basic trip saved:",
-            result
-        );
-
-
-        /*
-         * Flask should return a trip ID.
-         *
-         * Accept several reasonable response
-         * structures so frontend formatting
-         * does not break the database connection.
-         */
-
-        const returnedTripId =
-            result?.trip_id ??
-            result?.id ??
-            result?.trip?.trip_id ??
-            result?.trip?.id ??
-            result?.basic_information?.trip_id ??
-            result?.basic_information?.id;
-
-
         if (
-            !returnedTripId
+            !result ||
+            !result.trip_id
         ) {
 
             throw new Error(
-                "Flask saved the information but did not return a trip ID."
+                "The backend did not return a trip ID."
             );
+
         }
+
+
+        basicTripData =
+            data;
 
 
         currentTripId =
             Number(
-                returnedTripId
+                result.trip_id
             );
 
-
-        if (
-            !Number.isInteger(
-                currentTripId
-            ) ||
-            currentTripId <= 0
-        ) {
-
-            throw new Error(
-                "Flask returned an invalid trip ID."
-            );
-        }
-
-
-        /*
-         * Preserve returned information
-         * when available.
-         */
-
-        basicTripData =
-            result?.trip ||
-            result?.basic_information ||
-            data;
-
-
-        /*
-         * Persist locally as a backup.
-         */
 
         localStorage.setItem(
+
             STORAGE_KEYS.tripId,
-            String(currentTripId)
+
+            String(
+                currentTripId
+            )
+
         );
 
 
         localStorage.setItem(
+
             STORAGE_KEYS.basicTrip,
+
             JSON.stringify(
                 basicTripData
             )
+
         );
 
 
-        setMessage(
-            "basicSaved",
-            "Basic trip information saved."
-        );
-
-
-        console.log(
-            "Trip ID established:",
-            currentTripId
-        );
-
-
-        /*
-         * Move to planner scene.
-         */
-
-        showPage(
-            "planner"
-        );
-
-
-        return true;
+        return result;
 
     } catch (error) {
 
         console.error(
-            "BASIC INFORMATION ERROR:",
+            "SAVE BASIC INFORMATION ERROR:",
             error
         );
 
@@ -1144,22 +1207,14 @@ async function saveBasicInformation() {
         setMessage(
             "basicError",
             error.message ||
-            "Unable to save your trip."
+            "Unable to save basic trip information."
         );
 
 
-        return false;
+        return null;
 
-    } finally {
-
-        if (button) {
-
-            button.disabled = false;
-
-            button.textContent =
-                "CONTINUE TO PLAN TRIP →";
-        }
     }
+
 }
 
 
@@ -1169,758 +1224,102 @@ async function saveBasicInformation() {
 
 async function loadBasicInformation() {
 
-    let tripId =
-        currentTripId ||
-        Number(
-            localStorage.getItem(
-                STORAGE_KEYS.tripId
-            )
-        );
-
-
-    /*
-     * If we don't have a database ID,
-     * use the locally cached information.
-     */
-
     if (
-        !tripId ||
-        !Number.isInteger(
-            Number(tripId)
-        )
+        !currentTripId
     ) {
 
-        const cached =
-            localStorage.getItem(
-                STORAGE_KEYS.basicTrip
-            );
+        return null;
 
-
-        if (cached) {
-
-            try {
-
-                basicTripData =
-                    JSON.parse(
-                        cached
-                    );
-
-            } catch {
-
-                basicTripData =
-                    null;
-            }
-        }
-
-
-        if (basicTripData) {
-
-            populateBasicForm(
-                basicTripData
-            );
-        }
-
-
-        return;
     }
-
-
-    currentTripId =
-        Number(tripId);
 
 
     try {
 
-        const response =
+        const result =
             await API.getBasicTrip(
                 currentTripId
             );
 
 
-        console.log(
-            "Loaded basic trip:",
-            response
-        );
-
-
-        /*
-         * Accommodate:
-         *
-         * { id: ... }
-         *
-         * { trip: {...} }
-         *
-         * { basic_information: {...} }
-         */
-
-        const trip =
-            response?.trip ||
-            response?.basic_information ||
-            response;
-
-
         if (
-            trip &&
-            typeof trip === "object"
+            result &&
+            result.basic_information
         ) {
 
             basicTripData =
-                trip;
-
-
-            currentTripId =
-                Number(
-                    trip.id ||
-                    trip.trip_id ||
-                    currentTripId
-                );
-
-
-            localStorage.setItem(
-                STORAGE_KEYS.tripId,
-                String(currentTripId)
-            );
-
-
-            localStorage.setItem(
-                STORAGE_KEYS.basicTrip,
-                JSON.stringify(
-                    basicTripData
-                )
-            );
-
-
-            populateBasicForm(
-                basicTripData
-            );
-        }
-
-    } catch (error) {
-
-        console.warn(
-            "Could not retrieve database trip:",
-            error
-        );
-
-
-        /*
-         * Database request failed, so use
-         * the local copy if available.
-         */
-
-        const cached =
-            localStorage.getItem(
-                STORAGE_KEYS.basicTrip
-            );
-
-
-        if (cached) {
-
-            try {
-
-                basicTripData =
-                    JSON.parse(
-                        cached
-                    );
-
-
-                populateBasicForm(
-                    basicTripData
-                );
-
-            } catch {
-
-                basicTripData =
-                    null;
-            }
-        }
-    }
-}
-
-
-/* ============================================================
-   POPULATE BASIC FORM
-   ============================================================ */
-
-function populateBasicForm(
-    trip
-) {
-
-    if (
-        !trip ||
-        typeof trip !== "object"
-    ) {
-
-        return;
-    }
-
-
-    const fields = [
-
-        "departure_location",
-        "country",
-        "travelers",
-        "duration_days",
-        "travel_dates",
-        "maximum_total_travel_time",
-        "maximum_distance",
-        "transportation_preference",
-        "accommodation_preference",
-        "safety_requirement",
-        "budget"
-
-    ];
-
-
-    fields.forEach(
-        id => {
-
-            const element =
-                document.getElementById(
-                    id
-                );
-
-
-            if (
-                element &&
-                trip[id] !== undefined &&
-                trip[id] !== null
-            ) {
-
-                element.value =
-                    trip[id];
-            }
-        }
-    );
-
-
-    const other =
-        document.getElementById(
-            "other"
-        );
-
-
-    if (
-        other &&
-        trip.other !== undefined &&
-        trip.other !== null
-    ) {
-
-        other.value =
-            Array.isArray(
-                trip.other
-            )
-                ? trip.other.join(", ")
-                : String(
-                    trip.other
-                );
-    }
-
-
-    if (
-        trip.trip_scope
-    ) {
-
-        const radio =
-            document.querySelector(
-                `input[name="trip_scope"][value="${CSS.escape(trip.trip_scope)}"]`
-            );
-
-
-        if (radio) {
-
-            radio.checked =
-                true;
-        }
-    }
-
-
-    updateCountryField();
-}
-
-
-/* ============================================================
-   CHAT HELPERS
-   ============================================================ */
-
-function chatSetTyping(
-    show
-) {
-
-    if (
-        typeof window.wanderlustSetTyping ===
-        "function"
-    ) {
-
-        window.wanderlustSetTyping(
-            Boolean(show)
-        );
-    }
-}
-
-
-/* ------------------------------------------------------------
-   Assistant message
-   ------------------------------------------------------------ */
-
-function chatAddAssistantMessage(
-    text
-) {
-
-    if (
-        typeof window.wanderlustAddAssistantMessage ===
-        "function"
-    ) {
-
-        return window.wanderlustAddAssistantMessage(
-            String(text || "")
-        );
-    }
-
-
-    /*
-     * Compatibility fallback.
-     */
-
-    const container =
-        document.getElementById(
-            "tripChatMessages"
-        );
-
-
-    if (!container) {
-
-        console.warn(
-            "Chat container not found."
-        );
-
-        return null;
-    }
-
-
-    const message =
-        document.createElement(
-            "div"
-        );
-
-
-    message.className =
-        "chat-message assistant";
-
-
-    message.textContent =
-        String(text || "");
-
-
-    container.appendChild(
-        message
-    );
-
-
-    container.scrollTop =
-        container.scrollHeight;
-
-
-    return message;
-}
-
-
-/*
- * Compatibility alias.
- *
- * The previous version of the file used
- * chatAddAssistant() in one place and
- * chatAddAssistantMessage() elsewhere.
- *
- * Both now work.
- */
-
-function chatAddAssistant(
-    text
-) {
-
-    return chatAddAssistantMessage(
-        text
-    );
-}
-
-
-/* ============================================================
-   CHAT → BACKEND
-   ============================================================ */
-
-function initializeTripChatBackend() {
-
-    /*
-     * Prevent duplicate initialization.
-     */
-
-    if (
-        window.__wanderlustChatBackendInitialized
-    ) {
-
-        return;
-    }
-
-
-    window.__wanderlustChatBackendInitialized =
-        true;
-
-
-    document.addEventListener(
-        "wanderlust:chat-message",
-        async event => {
-
-            const message =
-                String(
-                    event?.detail?.message ||
-                    ""
-                ).trim();
-
-
-            if (!message) {
-
-                return;
-            }
-
-
-            /*
-             * The initial message is already
-             * handled by startTrip().
-             *
-             * Do not send it twice.
-             */
-
-            if (
-                tripStartInProgress
-            ) {
-
-                initialChatEventHandled =
-                    true;
-
-
-                console.log(
-                    "Initial chat event ignored because /api/trip/start is already processing it."
-                );
-
-
-                return;
-            }
-
-
-            /*
-             * After the first planning request,
-             * chat messages become modifications.
-             */
-
-            const tripId =
-                Number(
-                    currentTripId ||
-                    currentTrip?.trip_id ||
-                    currentTrip?.id
-                );
-
-
-            if (
-                !tripId ||
-                !Number.isInteger(
-                    tripId
-                )
-            ) {
-
-                chatAddAssistantMessage(
-                    "Please start a trip before asking me to modify it."
-                );
-
-
-                return;
-            }
-
-
-            await processChatUpdate(
-                tripId,
-                message
-            );
-        }
-    );
-}
-
-
-/* ============================================================
-   PROCESS CHAT UPDATE
-   ============================================================ */
-
-async function processChatUpdate(
-    tripId,
-    message
-) {
-
-    const clean =
-        String(
-            message || ""
-        ).trim();
-
-
-    if (!clean) {
-
-        return;
-    }
-
-
-    chatSetTyping(
-        true
-    );
-
-
-    console.log(
-        "WANDERLUST CHAT → /api/trip/update",
-        {
-            trip_id:
-                tripId,
-
-            change_request:
-                clean
-        }
-    );
-
-
-    try {
-
-        currentTrip =
-            await API.updateTrip(
-                tripId,
-                clean
-            );
-
-
-        console.log(
-            "WANDERLUST CHAT ← /api/trip/update",
-            currentTrip
-        );
-
-
-        if (
-            currentTrip?.trip_id ||
-            currentTrip?.id
-        ) {
-
-            currentTripId =
-                Number(
-                    currentTrip.trip_id ||
-                    currentTrip.id
-                );
-
-
-            localStorage.setItem(
-                STORAGE_KEYS.tripId,
-                String(currentTripId)
-            );
-        }
-
-
-        chatSetTyping(
-            false
-        );
-
-
-        const response =
-            currentTrip?.travel_options ||
-            currentTrip?.message ||
-            currentTrip?.response;
-
-
-        if (
-            typeof response === "string" &&
-            response.trim()
-        ) {
-
-            chatAddAssistantMessage(
-                response.trim()
-            );
+                result.basic_information;
 
         } else {
 
-            chatAddAssistantMessage(
-                "I've updated your travel recommendations based on that."
-            );
+            basicTripData =
+                result;
+
         }
 
 
-        renderTripResults(
-            currentTrip
-        );
+        if (basicTripData) {
+
+            localStorage.setItem(
+
+                STORAGE_KEYS.basicTrip,
+
+                JSON.stringify(
+                    basicTripData
+                )
+
+            );
+
+        }
 
 
-        updateBudgetUI();
+        return result;
 
     } catch (error) {
 
-        console.error(
-            "CHAT UPDATE ERROR:",
+        console.warn(
+            "Unable to load saved basic trip:",
             error
         );
 
 
-        chatSetTyping(
-            false
-        );
+        return null;
 
-
-        chatAddAssistantMessage(
-            "I couldn't apply that change. " +
-            (
-                error.message ||
-                "Unknown backend error."
-            )
-        );
-
-    } finally {
-
-        chatSetTyping(
-            false
-        );
     }
+
 }
 
 
 /* ============================================================
-   START AI PLANNER
+   START TRIP
    ============================================================ */
 
 async function startTrip() {
 
-    setMessage(
-        "plannerError",
-        "",
-        false
-    );
-
-
-    /*
-     * Recover trip ID from memory if necessary.
-     */
-
     if (
-        !currentTripId
+        tripStartInProgress
     ) {
-
-        const stored =
-            Number(
-                localStorage.getItem(
-                    STORAGE_KEYS.tripId
-                )
-            );
-
-
-        if (
-            Number.isInteger(stored) &&
-            stored > 0
-        ) {
-
-            currentTripId =
-                stored;
-        }
-    }
-
-
-    /*
-     * Basic Information must already
-     * exist in SQLite.
-     */
-
-    if (
-        !currentTripId ||
-        !Number.isInteger(
-            currentTripId
-        )
-    ) {
-
-        setMessage(
-            "plannerError",
-            "Please complete Basic Information first."
-        );
-
-
-        showPage(
-            "basic"
-        );
-
 
         return;
+
     }
 
 
-    /*
-     * Natural-language user request.
-     */
-
-    const preferences =
+    const userInput =
         value(
             "user_preferences"
         );
 
 
-    if (!preferences) {
+    if (!userInput) {
 
         setMessage(
             "plannerError",
             "Please describe what you want from your trip."
         );
 
-
         return;
+
     }
-
-
-    /*
-     * Mark the initial request as being
-     * handled by /api/trip/start.
-     */
-
-    tripStartInProgress =
-        true;
-
-
-    initialChatEventHandled =
-        false;
-
-
-    chatSetTyping(
-        true
-    );
-
-
-    /*
-     * app.py receives:
-     *
-     * {
-     *     trip_id: 123,
-     *     user_input: "..."
-     * }
-     *
-     * main.py retrieves the basic
-     * information from the database.
-     */
-
-    const data = {
-
-        trip_id:
-            Number(
-                currentTripId
-            ),
-
-        user_input:
-            String(
-                preferences
-            ).trim()
-
-    };
-
-
-    console.log(
-        "WANDERLUST → /api/trip/start",
-        data
-    );
 
 
     const button =
@@ -1929,102 +1328,108 @@ async function startTrip() {
         );
 
 
+    tripStartInProgress =
+        true;
+
+
     if (button) {
 
         button.disabled =
             true;
 
-
         button.textContent =
             "PLANNING...";
+
     }
+
+
+    setMessage(
+        "plannerError",
+        "",
+        false
+    );
+
+
+    setMessage(
+        "plannerLoading",
+        "Wanderlust is finding 3 destinations that match your request..."
+    );
+
+
+    chatSetTyping(
+        true
+    );
 
 
     try {
 
-        currentTrip =
-            await API.startTrip(
-                data
-            );
+        /* ----------------------------------------------------
+           Make sure basic information exists.
+        ---------------------------------------------------- */
+
+        if (!currentTripId) {
+
+            const saved =
+                await saveBasicInformation();
 
 
-        console.log(
-            "WANDERLUST ← /api/trip/start",
-            currentTrip
-        );
+            if (!saved) {
 
-
-        /*
-         * Recover the returned trip ID
-         * if the backend sends one.
-         */
-
-        const returnedTripId =
-            currentTrip?.trip_id ??
-            currentTrip?.id;
-
-
-        if (
-            returnedTripId
-        ) {
-
-            currentTripId =
-                Number(
-                    returnedTripId
+                throw new Error(
+                    "Please complete the basic trip information first."
                 );
 
+            }
 
-            localStorage.setItem(
-                STORAGE_KEYS.tripId,
-                String(currentTripId)
-            );
         }
 
 
-        /*
-         * Backend finished.
-         */
+        /* ----------------------------------------------------
+           Backend pipeline:
 
-        tripStartInProgress =
-            false;
+               app.py
+                 ↓
+               main.py
+                 ↓
+               MoodAgent
+                 ↓
+               TravelAgent
+                 ↓
+               Gemini → EXACTLY 3
+                 ↓
+               ResearchAgent
+                 ↓
+               Worker 1/2/3
+                 ↓
+               Gemma verification
+                 ↓
+               Pexels
+        ---------------------------------------------------- */
 
+        currentTrip =
+            await API.startTrip(
 
-        chatSetTyping(
-            false
-        );
+                currentTripId,
 
+                userInput
 
-        /*
-         * Display the AI's response.
-         */
-
-        const response =
-            currentTrip?.travel_options ||
-            currentTrip?.message ||
-            currentTrip?.response;
+            );
 
 
         if (
-            typeof response === "string" &&
-            response.trim()
+            !currentTrip
         ) {
 
-            chatAddAssistantMessage(
-                response.trim()
+            throw new Error(
+                "The backend returned no trip data."
             );
 
-        } else {
-
-            chatAddAssistantMessage(
-                "I've finished analyzing your trip preferences and found some destinations that match."
-            );
         }
 
 
-        /*
-         * Preserve the existing
-         * destination-card interface.
-         */
+        /* ----------------------------------------------------
+           Render the three final enriched options.
+        ---------------------------------------------------- */
 
         renderTripResults(
             currentTrip
@@ -2034,17 +1439,39 @@ async function startTrip() {
         updateBudgetUI();
 
 
-        const results =
+        /* ----------------------------------------------------
+           Chat response.
+        ---------------------------------------------------- */
+
+        chatSetTyping(
+            false
+        );
+
+
+        renderChatRecommendations(
+            currentTrip
+        );
+
+
+        /* ----------------------------------------------------
+           Show results.
+        ---------------------------------------------------- */
+
+        const resultsSection =
             document.getElementById(
                 "resultsSection"
             );
 
 
-        if (results) {
+        if (resultsSection) {
 
-            results.style.display =
+            resultsSection.style.display =
                 "block";
+
         }
+
+
+        scrollToResultsIfNeeded();
 
     } catch (error) {
 
@@ -2054,21 +1481,19 @@ async function startTrip() {
         );
 
 
-        tripStartInProgress =
-            false;
-
-
         chatSetTyping(
             false
         );
 
 
-        chatAddAssistantMessage(
-            "I couldn't finish planning your trip. " +
+        chatAddAssistant(
+
+            "I couldn't complete the trip search.\n\n" +
             (
                 error.message ||
                 "Unknown backend error."
             )
+
         );
 
 
@@ -2094,120 +1519,57 @@ async function startTrip() {
             button.disabled =
                 false;
 
-
             button.textContent =
                 "FIND TRIPS →";
+
         }
+
+
+        setMessage(
+            "plannerLoading",
+            "",
+            false
+        );
+
     }
+
 }
 
 
 /* ============================================================
-   CANDIDATES
+   GET THREE DESTINATIONS
    ============================================================ */
 
-function getCandidates(trip) {
-
-    if (!trip) {
-        return [];
-    }
-
-    /*
-     * ========================================================
-     * FINAL RECOMMENDATIONS
-     * ========================================================
-     *
-     * The backend's final Gemini stage stores the three
-     * selected travel options in:
-     *
-     *     trip.travel_options
-     *
-     * These are the destinations the user should see.
-     */
+function getCandidates(
+    trip
+) {
 
     if (
+        trip &&
         Array.isArray(
             trip.travel_options
         )
     ) {
 
-        return trip.travel_options
-            .filter(
-                option =>
-                    option &&
-                    typeof option === "object"
-            )
-            .map(
-                (option, index) => {
+        return trip.travel_options;
 
-                    return {
-
-                        name:
-                            option.destination ||
-                            option.destination_name ||
-                            "Unknown destination",
-
-                        country:
-                            option.country ||
-                            "",
-
-                        reason:
-                            option.why_it_fits ||
-                            option.reason ||
-                            option.match_reason ||
-                            "",
-
-                        rank:
-                            option.rank ||
-                            index + 1,
-
-                        highlights:
-                            Array.isArray(
-                                option.highlights
-                            )
-                                ? option.highlights
-                                : [],
-
-                        limitations:
-                            Array.isArray(
-                                option.limitations
-                            )
-                                ? option.limitations
-                                : [],
-
-                        budget_summary:
-                            option.budget_summary ||
-                            "",
-
-                        practicality_summary:
-                            option.practicality_summary ||
-                            "",
-
-                        weather_summary:
-                            option.weather_summary ||
-                            "",
-
-                        confidence:
-                            option.confidence ||
-                            ""
-
-                    };
-
-                }
-            );
     }
 
 
-    /*
-     * ========================================================
-     * FALLBACK FOR OLD RESPONSES
-     * ========================================================
-     *
-     * Only use these if the backend did not return
-     * travel_options.
-     */
+    if (
+        trip &&
+        Array.isArray(
+            trip.destinations
+        )
+    ) {
+
+        return trip.destinations;
+
+    }
+
 
     if (
+        trip &&
         trip.candidate_result &&
         Array.isArray(
             trip.candidate_result.candidates
@@ -2222,58 +1584,159 @@ function getCandidates(trip) {
 
 
     if (
+        trip &&
         Array.isArray(
             trip.candidates
         )
     ) {
 
-        return trip.candidates.map(
-            candidate => {
-
-                if (
-                    typeof candidate ===
-                    "string"
-                ) {
-
-                    return {
-
-                        name:
-                            candidate,
-
-                        country:
-                            "",
-
-                        reason:
-                            ""
-
-                    };
-
-                }
-
-                return candidate;
-
-            }
-        );
-
-    }
-
-
-    if (
-        Array.isArray(
-            trip.data?.candidates
-        )
-    ) {
-
-        return trip.data.candidates;
+        return trip.candidates;
 
     }
 
 
     return [];
+
 }
 
+
 /* ============================================================
-   RENDER AI RESULTS
+   CHAT HELPERS
+   ============================================================ */
+
+function chatAddAssistant(
+    text
+) {
+
+    if (
+        typeof window
+            .wanderlustAddAssistantMessage
+        ===
+        "function"
+    ) {
+
+        return window
+            .wanderlustAddAssistantMessage(
+                text
+            );
+
+    }
+
+
+    return null;
+
+}
+
+
+function chatSetTyping(
+    show
+) {
+
+    if (
+        typeof window
+            .wanderlustSetTyping
+        ===
+        "function"
+    ) {
+
+        window
+            .wanderlustSetTyping(
+                Boolean(
+                    show
+                )
+            );
+
+    }
+
+}
+
+
+/* ============================================================
+   CHAT CANDIDATE FORMAT
+   ============================================================ */
+
+function formatChatCandidate(
+    candidate,
+    index
+) {
+
+    const name =
+        candidate?.name ||
+        candidate?.destination ||
+        "Unknown destination";
+
+
+    const country =
+        candidate?.country ||
+        "";
+
+
+    const reason =
+        candidate?.reason ||
+        "This destination matches your travel request.";
+
+
+    return (
+
+        `${index + 1}. ${name}` +
+
+        (
+            country
+                ? `, ${country}`
+                : ""
+        ) +
+
+        `\n${reason}`
+
+    );
+
+}
+
+
+/* ============================================================
+   CHAT RECOMMENDATIONS
+   ============================================================ */
+
+function renderChatRecommendations(
+    trip
+) {
+
+    const candidates =
+        getCandidates(
+            trip
+        );
+
+
+    if (
+        candidates.length !== 3
+    ) {
+
+        return;
+
+    }
+
+
+    chatAddAssistant(
+
+        "I've finished finding the destinations that best match your request:\n\n" +
+
+        candidates
+            .map(
+                formatChatCandidate
+            )
+            .join(
+                "\n\n"
+            ) +
+
+        "\n\nYou can select one of the three options below, or tell me what you'd like to change."
+
+    );
+
+}
+
+
+/* ============================================================
+   RESULTS
    ============================================================ */
 
 function renderTripResults(
@@ -2289,6 +1752,7 @@ function renderTripResults(
     if (!grid) {
 
         return;
+
     }
 
 
@@ -2303,7 +1767,7 @@ function renderTripResults(
 
 
     if (
-        !candidates.length
+        candidates.length !== 3
     ) {
 
         grid.innerHTML = `
@@ -2311,20 +1775,20 @@ function renderTripResults(
             <div class="panel">
 
                 <strong>
-                    No destinations were returned.
+                    Unable to display the recommendations.
                 </strong>
 
                 <p>
-                    Try changing your travel preferences
-                    and search again.
+                    The travel system did not return
+                    exactly three destinations.
                 </p>
 
             </div>
 
         `;
 
-
         return;
+
     }
 
 
@@ -2344,7 +1808,70 @@ function renderTripResults(
                 "result-card";
 
 
+            const name =
+                candidate?.name ||
+                candidate?.destination ||
+                "Unknown destination";
+
+
+            const country =
+                candidate?.country ||
+                "";
+
+
+            const reason =
+                candidate?.reason ||
+                "No additional explanation was provided.";
+
+
+            const description =
+                candidate?.description ||
+                "";
+
+
+            const image =
+                candidate?.image?.image_url ||
+                "";
+
+
+            const photographer =
+                candidate?.image?.photographer ||
+                "";
+
+
             card.innerHTML = `
+
+                ${
+                    image
+                        ? `
+                            <div
+                                class="result-card-image"
+                                style="
+                                    width:100%;
+                                    height:210px;
+                                    overflow:hidden;
+                                    border-radius:14px 14px 0 0;
+                                    background:#e2e8f0;
+                                "
+                            >
+
+                                <img
+                                    src="${escapeHtml(image)}"
+                                    alt="${escapeHtml(name)}"
+                                    style="
+                                        width:100%;
+                                        height:100%;
+                                        object-fit:cover;
+                                        display:block;
+                                    "
+                                    loading="lazy"
+                                >
+
+                            </div>
+                        `
+                        : ""
+                }
+
 
                 <div class="result-card-body">
 
@@ -2352,32 +1879,74 @@ function renderTripResults(
                         ${index + 1}
                     </span>
 
+
                     <h3>
                         ${escapeHtml(
-                            candidate.name ||
-                            candidate.destination_name ||
-                            "Unknown destination"
+                            name
                         )}
                     </h3>
 
-                    <div class="result-country">
 
-                        ${escapeHtml(
-                            candidate.country ||
-                            ""
-                        )}
+                    ${
+                        country
+                            ? `
+                                <div class="result-country">
+                                    ${escapeHtml(
+                                        country
+                                    )}
+                                </div>
+                            `
+                            : ""
+                    }
 
-                    </div>
+
+                    ${
+                        description
+                            ? `
+                                <p
+                                    style="
+                                        line-height:1.6;
+                                        margin:12px 0;
+                                    "
+                                >
+                                    ${escapeHtml(
+                                        description
+                                    )}
+                                </p>
+                            `
+                            : ""
+                    }
+
 
                     <p class="result-reason">
 
                         ${escapeHtml(
-                            candidate.reason ||
-                            candidate.match_reason ||
-                            "No additional explanation was provided."
+                            reason
                         )}
 
                     </p>
+
+
+                    ${
+                        photographer
+                            ? `
+                                <div
+                                    style="
+                                        font-size:11px;
+                                        color:var(--muted);
+                                        margin-top:8px;
+                                    "
+                                >
+                                    Photo by
+                                    ${escapeHtml(
+                                        photographer
+                                    )}
+                                    on Pexels
+                                </div>
+                            `
+                            : ""
+                    }
+
 
                     <div class="option-meta">
 
@@ -2388,15 +1957,14 @@ function renderTripResults(
                             </small>
 
                             <strong>
-
                                 ${escapeHtml(
                                     basicTripData?.trip_scope ||
                                     "—"
                                 )}
-
                             </strong>
 
                         </div>
+
 
                         <div class="meta-box">
 
@@ -2405,15 +1973,14 @@ function renderTripResults(
                             </small>
 
                             <strong>
-
                                 ${escapeHtml(
                                     basicTripData?.travelers ||
                                     "—"
                                 )}
-
                             </strong>
 
                         </div>
+
 
                         <div class="meta-box">
 
@@ -2422,12 +1989,10 @@ function renderTripResults(
                             </small>
 
                             <strong>
-
                                 ${escapeHtml(
                                     basicTripData?.duration_days ||
                                     "—"
                                 )}
-
                             </strong>
 
                         </div>
@@ -2447,20 +2012,18 @@ function renderTripResults(
                         <button
                             class="btn btn-blue"
                             type="button"
+                            data-action="select"
                         >
-
                             SELECT THIS TRIP
-
                         </button>
 
 
                         <button
                             class="btn btn-light"
                             type="button"
+                            data-action="details"
                         >
-
                             DETAILS
-
                         </button>
 
                     </div>
@@ -2470,54 +2033,346 @@ function renderTripResults(
             `;
 
 
-            const buttons =
-                card.querySelectorAll(
-                    "button"
+            const selectButton =
+                card.querySelector(
+                    '[data-action="select"]'
                 );
 
 
-            if (
-                buttons[0]
-            ) {
+            const detailsButton =
+                card.querySelector(
+                    '[data-action="details"]'
+                );
 
-                buttons[0].addEventListener(
+
+            if (selectButton) {
+
+                selectButton.addEventListener(
                     "click",
-                    () => {
-
+                    () =>
                         selectTrip(
                             index
-                        );
-                    }
+                        )
                 );
+
             }
 
 
-            if (
-                buttons[1]
-            ) {
+            if (detailsButton) {
 
-                buttons[1].addEventListener(
+                detailsButton.addEventListener(
                     "click",
-                    () => {
-
+                    () =>
                         showDestination(
                             index
-                        );
-                    }
+                        )
                 );
+
             }
 
 
             grid.appendChild(
                 card
             );
+
         }
     );
+
 }
 
 
 /* ============================================================
-   SELECT TRIP
+   SHOW DESTINATION DETAILS
+   ============================================================ */
+
+function showDestination(
+    index
+) {
+
+    if (!currentTrip) {
+
+        return;
+
+    }
+
+
+    const candidates =
+        getCandidates(
+            currentTrip
+        );
+
+
+    if (
+        index < 0 ||
+        index >= candidates.length
+    ) {
+
+        return;
+
+    }
+
+
+    const candidate =
+        candidates[index];
+
+
+    const modal =
+        document.getElementById(
+            "destinationModal"
+        );
+
+
+    if (!modal) {
+
+        return;
+
+    }
+
+
+    const title =
+        document.getElementById(
+            "modalTitle"
+        );
+
+
+    const country =
+        document.getElementById(
+            "modalCountry"
+        );
+
+
+    const reason =
+        document.getElementById(
+            "modalReason"
+        );
+
+
+    const map =
+        document.getElementById(
+            "modalMap"
+        );
+
+
+    const name =
+        candidate?.name ||
+        candidate?.destination ||
+        "Destination";
+
+
+    if (title) {
+
+        title.textContent =
+            name;
+
+    }
+
+
+    if (country) {
+
+        country.textContent =
+            candidate?.country ||
+            "";
+
+    }
+
+
+    if (reason) {
+
+        reason.textContent =
+            candidate?.description ||
+            candidate?.reason ||
+            "";
+
+    }
+
+
+    if (map) {
+
+        const research =
+            candidate?.research ||
+            {};
+
+
+        const strengths =
+            Array.isArray(
+                research.strengths
+            )
+                ? research.strengths
+                : [];
+
+
+        const limitations =
+            Array.isArray(
+                research.limitations
+            )
+                ? research.limitations
+                : [];
+
+
+        const evidence =
+            Array.isArray(
+                research.evidence
+            )
+                ? research.evidence
+                : [];
+
+
+        let html =
+            "";
+
+
+        if (
+            strengths.length
+        ) {
+
+            html += `
+
+                <div class="map-item">
+
+                    <strong>
+                        Strengths
+                    </strong>
+
+                    <ul>
+                        ${
+                            strengths
+                                .map(
+                                    item =>
+                                        `<li>${escapeHtml(item)}</li>`
+                                )
+                                .join("")
+                        }
+                    </ul>
+
+                </div>
+
+            `;
+
+        }
+
+
+        if (
+            limitations.length
+        ) {
+
+            html += `
+
+                <div class="map-item">
+
+                    <strong>
+                        Limitations
+                    </strong>
+
+                    <ul>
+                        ${
+                            limitations
+                                .map(
+                                    item =>
+                                        `<li>${escapeHtml(item)}</li>`
+                                )
+                                .join("")
+                        }
+                    </ul>
+
+                </div>
+
+            `;
+
+        }
+
+
+        if (
+            evidence.length
+        ) {
+
+            html += `
+
+                <div class="map-item">
+
+                    <strong>
+                        Research evidence
+                    </strong>
+
+                    <ul>
+                        ${
+                            evidence
+                                .slice(
+                                    0,
+                                    5
+                                )
+                                .map(
+                                    item =>
+                                        `<li>${escapeHtml(
+                                            typeof item === "string"
+                                                ? item
+                                                : JSON.stringify(item)
+                                        )}</li>`
+                                )
+                                .join("")
+                        }
+                    </ul>
+
+                </div>
+
+            `;
+
+        }
+
+
+        if (!html) {
+
+            html = `
+
+                <div class="map-item">
+
+                    Detailed research is available
+                    in the destination recommendation.
+
+                </div>
+
+            `;
+
+        }
+
+
+        map.innerHTML =
+            html;
+
+    }
+
+
+    modal.classList.add(
+        "open"
+    );
+
+}
+
+
+/* ============================================================
+   CLOSE DESTINATION MODAL
+   ============================================================ */
+
+function closeModal() {
+
+    const modal =
+        document.getElementById(
+            "destinationModal"
+        );
+
+
+    if (modal) {
+
+        modal.classList.remove(
+            "open"
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   SELECT DESTINATION
    ============================================================ */
 
 async function selectTrip(
@@ -2530,8 +2385,8 @@ async function selectTrip(
             "No active trip."
         );
 
-
         return;
+
     }
 
 
@@ -2547,16 +2402,22 @@ async function selectTrip(
     ) {
 
         alert(
-            "Invalid destination."
+            "Invalid destination selection."
         );
 
-
         return;
+
     }
 
 
     const selected =
         candidates[index];
+
+
+    const selectedName =
+        selected?.name ||
+        selected?.destination ||
+        "Selected destination";
 
 
     const panel =
@@ -2581,15 +2442,15 @@ async function selectTrip(
 
         panel.style.display =
             "block";
+
     }
 
 
     if (name) {
 
         name.textContent =
-            selected.name ||
-            selected.destination_name ||
-            "Selected destination";
+            selectedName;
+
     }
 
 
@@ -2607,41 +2468,7 @@ async function selectTrip(
             </div>
 
         `;
-    }
 
-
-    const tripId =
-        Number(
-            currentTrip.trip_id ||
-            currentTripId
-        );
-
-
-    if (
-        !tripId ||
-        !Number.isInteger(
-            tripId
-        )
-    ) {
-
-        if (content) {
-
-            content.innerHTML = `
-
-                <div
-                    class="error"
-                    style="display:block;"
-                >
-
-                    No active trip ID was found.
-
-                </div>
-
-            `;
-        }
-
-
-        return;
     }
 
 
@@ -2649,8 +2476,11 @@ async function selectTrip(
 
         currentTrip =
             await API.selectTrip(
-                tripId,
+
+                currentTrip.trip_id,
+
                 index
+
             );
 
 
@@ -2660,6 +2490,21 @@ async function selectTrip(
 
 
         updateBudgetUI();
+
+
+        if (panel) {
+
+            panel.scrollIntoView({
+
+                behavior:
+                    "smooth",
+
+                block:
+                    "start"
+
+            });
+
+        }
 
     } catch (error) {
 
@@ -2685,13 +2530,16 @@ async function selectTrip(
                 </div>
 
             `;
+
         }
+
     }
+
 }
 
 
 /* ============================================================
-   SELECTED TRIP
+   RENDER SELECTED TRIP
    ============================================================ */
 
 function renderSelectedTrip(
@@ -2703,17 +2551,22 @@ function renderSelectedTrip(
         {};
 
 
-    const budget =
-        trip?.budget ||
-        {};
+    const details =
+        selected?.details ||
+        selected;
 
 
     const costs =
         Array.isArray(
-            selected.costs
+            details?.costs
         )
-            ? selected.costs
+            ? details.costs
             : [];
+
+
+    const budget =
+        trip?.budget ||
+        {};
 
 
     let html = `
@@ -2727,12 +2580,10 @@ function renderSelectedTrip(
                 </small>
 
                 <strong>
-
                     ${escapeHtml(
                         trip?.status ||
-                        "—"
+                        "selected"
                     )}
-
                 </strong>
 
             </div>
@@ -2745,11 +2596,10 @@ function renderSelectedTrip(
                 </small>
 
                 <strong>
-
                     ${formatMoney(
-                        budget.estimated_total
+                        details?.total_estimated_cost ??
+                        budget?.estimated_total
                     )}
-
                 </strong>
 
             </div>
@@ -2758,15 +2608,13 @@ function renderSelectedTrip(
             <div class="meta-box">
 
                 <small>
-                    Remaining
+                    Estimated Remaining
                 </small>
 
                 <strong>
-
                     ${formatMoney(
-                        budget.estimated_remaining
+                        budget?.estimated_remaining
                     )}
-
                 </strong>
 
             </div>
@@ -2782,11 +2630,16 @@ function renderSelectedTrip(
 
         html += `
 
-            <div style="margin-top:17px;">
+            <div
+                style="
+                    margin-top:17px;
+                "
+            >
 
                 <h4>
                     Estimated Costs
                 </h4>
+
 
                 <div class="expense-list">
 
@@ -2803,37 +2656,33 @@ function renderSelectedTrip(
                         <div class="expense-main">
 
                             <strong>
-
                                 ${escapeHtml(
                                     cost.description ||
                                     cost.category ||
                                     "Travel cost"
                                 )}
-
                             </strong>
 
                             <span>
-
                                 ${escapeHtml(
                                     cost.category ||
                                     "other"
                                 )}
-
                             </span>
 
                         </div>
 
-                        <strong>
 
+                        <strong>
                             ${formatMoney(
                                 cost.amount
                             )}
-
                         </strong>
 
                     </div>
 
                 `;
+
             }
         );
 
@@ -2845,12 +2694,53 @@ function renderSelectedTrip(
             </div>
 
         `;
+
     }
 
 
     if (
-        budget.estimates_affordable ===
-        false
+        Array.isArray(
+            details?.unknown_costs
+        ) &&
+        details.unknown_costs.length
+    ) {
+
+        html += `
+
+            <div
+                style="
+                    margin-top:15px;
+                "
+            >
+
+                <h4>
+                    Costs requiring verification
+                </h4>
+
+                <ul>
+
+                    ${
+                        details.unknown_costs
+                            .map(
+                                item =>
+                                    `<li>${escapeHtml(item)}</li>`
+                            )
+                            .join("")
+                    }
+
+                </ul>
+
+            </div>
+
+        `;
+
+    }
+
+
+    if (
+        details?.within_budget === false
+        ||
+        budget?.estimates_affordable === false
     ) {
 
         html += `
@@ -2860,7 +2750,8 @@ function renderSelectedTrip(
                 style="display:block;"
             >
 
-                This trip exceeds the available budget.
+                This trip currently exceeds
+                the available budget.
 
             </div>
 
@@ -2875,25 +2766,112 @@ function renderSelectedTrip(
                 style="display:block;"
             >
 
-                This trip currently fits within the budget.
+                This trip currently fits
+                within the available budget.
 
             </div>
 
         `;
+
     }
 
 
-    const content =
+    const notes =
+        Array.isArray(
+            details?.notes
+        )
+            ? details.notes
+            : [];
+
+
+    if (
+        notes.length
+    ) {
+
+        html += `
+
+            <div
+                style="
+                    margin-top:15px;
+                "
+            >
+
+                <h4>
+                    Notes
+                </h4>
+
+                <ul>
+
+                    ${
+                        notes
+                            .map(
+                                note =>
+                                    `<li>${escapeHtml(note)}</li>`
+                            )
+                            .join("")
+                    }
+
+                </ul>
+
+            </div>
+
+        `;
+
+    }
+
+
+    if (
+        trip?.map_data &&
+        Array.isArray(
+            trip.map_data
+        ) &&
+        trip.map_data.length
+    ) {
+
+        html += `
+
+            <div
+                style="
+                    margin-top:15px;
+                "
+            >
+
+                <h4>
+                    Location
+                </h4>
+
+                <p
+                    style="
+                        color:var(--muted);
+                        font-size:13px;
+                    "
+                >
+
+                    Geographic information
+                    is available for this destination.
+
+                </p>
+
+            </div>
+
+        `;
+
+    }
+
+
+    if (
         document.getElementById(
             "selectedTripContent"
-        );
+        )
+    ) {
 
-
-    if (content) {
-
-        content.innerHTML =
+        document.getElementById(
+            "selectedTripContent"
+        ).innerHTML =
             html;
+
     }
+
 }
 
 
@@ -2909,22 +2887,22 @@ async function confirmTrip() {
             "No active trip."
         );
 
-
         return;
+
     }
 
 
     if (
         currentTrip.status !==
-        "awaiting_confirmation"
+        "selected"
     ) {
 
         alert(
             "Select a destination first."
         );
 
-
         return;
+
     }
 
 
@@ -2939,9 +2917,9 @@ async function confirmTrip() {
         button.disabled =
             true;
 
-
         button.textContent =
             "CONFIRMING...";
+
     }
 
 
@@ -2949,8 +2927,7 @@ async function confirmTrip() {
 
         currentTrip =
             await API.confirmTrip(
-                currentTrip.trip_id ||
-                currentTripId
+                currentTrip.trip_id
             );
 
 
@@ -2962,8 +2939,15 @@ async function confirmTrip() {
         updateBudgetUI();
 
 
-        alert(
-            "Trip confirmed."
+        chatAddAssistant(
+
+            `Your trip to ${
+                escapeHtml(
+                    currentTrip.selected_destination ||
+                    "the selected destination"
+                )
+            } has been confirmed.`
+
         );
 
     } catch (error) {
@@ -2985,11 +2969,13 @@ async function confirmTrip() {
             button.disabled =
                 false;
 
-
             button.textContent =
                 "CONFIRM TRIP";
+
         }
+
     }
+
 }
 
 
@@ -3002,16 +2988,15 @@ async function updateTrip(
 ) {
 
     if (
-        !currentTrip?.trip_id &&
-        !currentTripId
+        !currentTrip?.trip_id
     ) {
 
-        alert(
-            "No active trip."
+        chatAddAssistant(
+            "There is no active trip to update."
         );
 
-
         return;
+
     }
 
 
@@ -3023,28 +3008,38 @@ async function updateTrip(
 
     if (!clean) {
 
-        alert(
-            "Please enter the changes."
-        );
+        return;
 
+    }
+
+
+    if (
+        tripChatProcessing
+    ) {
 
         return;
+
     }
+
+
+    tripChatProcessing =
+        true;
+
+
+    chatSetTyping(
+        true
+    );
 
 
     try {
 
-        setMessage(
-            "plannerLoading",
-            "Updating your travel options..."
-        );
-
-
         currentTrip =
             await API.updateTrip(
-                currentTrip.trip_id ||
-                currentTripId,
+
+                currentTrip.trip_id,
+
                 clean
+
             );
 
 
@@ -3055,6 +3050,34 @@ async function updateTrip(
 
         updateBudgetUI();
 
+
+        chatSetTyping(
+            false
+        );
+
+
+        chatAddAssistant(
+
+            "I've updated your trip options based on your request. " +
+            "The three new destinations are shown below."
+
+        );
+
+
+        const results =
+            document.getElementById(
+                "resultsSection"
+            );
+
+
+        if (results) {
+
+            results.style.display =
+                "block";
+
+        }
+
+
     } catch (error) {
 
         console.error(
@@ -3063,1473 +3086,32 @@ async function updateTrip(
         );
 
 
-        setMessage(
-            "plannerError",
-            error.message
-        );
-
-    } finally {
-
-        setMessage(
-            "plannerLoading",
-            "",
+        chatSetTyping(
             false
         );
-    }
-}
 
 
-/* ============================================================
-   CLEAR SELECTION
-   ============================================================ */
+        chatAddAssistant(
 
-function clearSelection() {
+            "I couldn't update the trip:\n\n" +
+            (
+                error.message ||
+                "Unknown error."
+            )
 
-    const panel =
-        document.getElementById(
-            "selectionPanel"
-        );
-
-
-    if (panel) {
-
-        panel.style.display =
-            "none";
-    }
-}
-
-
-/* ============================================================
-   RESET PLANNER
-   ============================================================ */
-
-function resetPlanner() {
-
-    currentTrip =
-        null;
-
-
-    const results =
-        document.getElementById(
-            "resultsSection"
-        );
-
-
-    if (results) {
-
-        results.style.display =
-            "none";
-    }
-
-
-    clearSelection();
-
-
-    showPage(
-        "planner"
-    );
-}
-
-
-/* ============================================================
-   CANCEL
-   ============================================================ */
-
-async function cancelCurrentTrip() {
-
-    const tripId =
-        Number(
-            currentTrip?.trip_id ||
-            currentTripId
-        );
-
-
-    if (
-        !tripId ||
-        !Number.isInteger(
-            tripId
-        )
-    ) {
-
-        return;
-    }
-
-
-    if (
-        !confirm(
-            "Cancel this planning session?"
-        )
-    ) {
-
-        return;
-    }
-
-
-    try {
-
-        currentTrip =
-            await API.cancelTrip(
-                tripId
-            );
-
-
-        clearSelection();
-
-
-        updateBudgetUI();
-
-
-        alert(
-            "Trip cancelled."
-        );
-
-    } catch (error) {
-
-        console.error(
-            "CANCEL TRIP ERROR:",
-            error
-        );
-
-
-        alert(
-            error.message
-        );
-    }
-}
-
-
-/* ============================================================
-   DELETE
-   ============================================================ */
-
-async function deleteCurrentTrip() {
-
-    if (!currentTripId) {
-
-        return;
-    }
-
-
-    if (
-        !confirm(
-            "Delete this trip session permanently?"
-        )
-    ) {
-
-        return;
-    }
-
-
-    try {
-
-        await API.deleteTrip(
-            currentTripId
-        );
-
-
-        currentTrip =
-            null;
-
-
-        basicTripData =
-            null;
-
-
-        currentTripId =
-            null;
-
-
-        localStorage.removeItem(
-            STORAGE_KEYS.tripId
-        );
-
-
-        localStorage.removeItem(
-            STORAGE_KEYS.basicTrip
-        );
-
-
-        resetPlanner();
-
-
-        showPage(
-            "home"
-        );
-
-    } catch (error) {
-
-        console.error(
-            "DELETE TRIP ERROR:",
-            error
-        );
-
-
-        alert(
-            error.message
-        );
-    }
-}
-
-
-/* ============================================================
-   AI DESTINATION DETAILS
-   ============================================================ */
-
-function showDestination(
-    index
-) {
-
-    if (!currentTrip) {
-
-        return;
-    }
-
-
-    const candidates =
-        getCandidates(
-            currentTrip
-        );
-
-
-    const candidate =
-        candidates[index];
-
-
-    if (!candidate) {
-
-        return;
-    }
-
-
-    const modal =
-        document.getElementById(
-            "destinationModal"
-        );
-
-
-    if (!modal) {
-
-        return;
-    }
-
-
-    const title =
-        document.getElementById(
-            "modalTitle"
-        );
-
-
-    const country =
-        document.getElementById(
-            "modalCountry"
-        );
-
-
-    const reason =
-        document.getElementById(
-            "modalReason"
-        );
-
-
-    if (title) {
-
-        title.textContent =
-            candidate.name ||
-            candidate.destination_name ||
-            "";
-    }
-
-
-    if (country) {
-
-        country.textContent =
-            candidate.country ||
-            "";
-    }
-
-
-    if (reason) {
-
-        reason.textContent =
-            candidate.reason ||
-            candidate.match_reason ||
-            "";
-    }
-
-
-    modal.classList.add(
-        "open"
-    );
-}
-
-
-/* ============================================================
-   CLOSE MODAL
-   ============================================================ */
-
-function closeModal() {
-
-    const modal =
-        document.getElementById(
-            "destinationModal"
-        );
-
-
-    if (modal) {
-
-        modal.classList.remove(
-            "open"
-        );
-    }
-}
-
-
-/* ============================================================
-   HOME DESTINATIONS
-   ============================================================ */
-
-async function loadHomeDestinations() {
-
-    const container =
-        document.getElementById(
-            "homeDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-    }
-
-
-    try {
-
-        const response =
-            await API.homeDestinations();
-
-
-        const destinations =
-            normalizeDestinations(
-                response
-            );
-
-
-        renderHomeDestinations(
-            destinations
-        );
-
-    } catch (error) {
-
-        console.error(
-            "HOME ERROR:",
-            error
-        );
-
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                Unable to load destinations.
-
-                <p>
-
-                    ${escapeHtml(
-                        error.message
-                    )}
-
-                </p>
-
-            </div>
-
-        `;
-    }
-}
-
-
-/* ============================================================
-   RENDER HOME
-   ============================================================ */
-
-function renderHomeDestinations(
-    destinations
-) {
-
-    const container =
-        document.getElementById(
-            "homeDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-    }
-
-
-    container.innerHTML =
-        "";
-
-
-    if (
-        !Array.isArray(
-            destinations
-        ) ||
-        !destinations.length
-    ) {
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                No destinations available.
-
-            </div>
-
-        `;
-
-
-        return;
-    }
-
-
-    destinations.forEach(
-        destination => {
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "destination-card";
-
-
-            card.innerHTML = `
-
-                <img
-                    src="${escapeHtml(
-                        destination.image_url ||
-                        ""
-                    )}"
-                    alt="${escapeHtml(
-                        destination.name ||
-                        "Destination"
-                    )}"
-                    loading="lazy"
-                >
-
-
-                <div class="destination-overlay">
-
-                    <h3>
-
-                        ${escapeHtml(
-                            destination.name ||
-                            ""
-                        )}
-
-                    </h3>
-
-
-                    <p>
-
-                        ${escapeHtml(
-                            destination.description ||
-                            destination.country ||
-                            ""
-                        )}
-
-                    </p>
-
-                </div>
-
-            `;
-
-
-            card.addEventListener(
-                "click",
-                () => {
-
-                    openDestination(
-                        destination
-                    );
-                }
-            );
-
-
-            container.appendChild(
-                card
-            );
-        }
-    );
-}
-
-
-/* ============================================================
-   RANDOM DESTINATIONS
-   ============================================================ */
-
-async function loadRandomDestinations() {
-
-    const container =
-        document.getElementById(
-            "randomDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-    }
-
-
-    container.innerHTML = `
-
-        <div
-            class="loading"
-            style="display:block;"
-        >
-
-            Loading destinations...
-
-        </div>
-
-    `;
-
-
-    try {
-
-        const response =
-            await API.randomDestinations(
-                6
-            );
-
-
-        console.log(
-            "Random destination response:",
-            response
-        );
-
-
-        const destinations =
-            normalizeDestinations(
-                response
-            );
-
-
-        renderRandomDestinations(
-            destinations
-        );
-
-    } catch (error) {
-
-        console.error(
-            "RANDOM ERROR:",
-            error
-        );
-
-
-        container.innerHTML = `
-
-            <div
-                class="error"
-                style="display:block;"
-            >
-
-                Unable to load random destinations.
-
-                <br>
-
-                ${escapeHtml(
-                    error.message
-                )}
-
-            </div>
-
-        `;
-    }
-}
-
-
-/* ============================================================
-   RENDER RANDOM
-   ============================================================ */
-
-function renderRandomDestinations(
-    destinations
-) {
-
-    const container =
-        document.getElementById(
-            "randomDestinations"
-        );
-
-
-    if (!container) {
-
-        return;
-    }
-
-
-    container.innerHTML =
-        "";
-
-
-    if (
-        !Array.isArray(
-            destinations
-        ) ||
-        !destinations.length
-    ) {
-
-        container.innerHTML = `
-
-            <div class="panel">
-
-                No random destinations are available.
-
-            </div>
-
-        `;
-
-
-        return;
-    }
-
-
-    destinations.forEach(
-        destination => {
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "random-card";
-
-
-            card.innerHTML = `
-
-                <img
-                    class="random-card-image"
-                    src="${escapeHtml(
-                        destination.image_url ||
-                        ""
-                    )}"
-                    alt="${escapeHtml(
-                        destination.name ||
-                        "Destination"
-                    )}"
-                    loading="lazy"
-                >
-
-
-                <div class="random-card-content">
-
-                    <h3>
-
-                        ${escapeHtml(
-                            destination.name ||
-                            ""
-                        )}
-
-                    </h3>
-
-
-                    <div class="random-card-country">
-
-                        ${escapeHtml(
-                            destination.country ||
-                            ""
-                        )}
-
-                    </div>
-
-
-                    <p class="random-card-description">
-
-                        ${escapeHtml(
-                            destination.description ||
-                            ""
-                        )}
-
-                    </p>
-
-
-                    <button
-                        class="btn btn-blue random-card-button"
-                        type="button"
-                    >
-
-                        EXPLORE
-
-                    </button>
-
-                </div>
-
-            `;
-
-
-            const button =
-                card.querySelector(
-                    "button"
-                );
-
-
-            if (button) {
-
-                button.addEventListener(
-                    "click",
-                    event => {
-
-                        event.stopPropagation();
-
-
-                        openDestination(
-                            destination
-                        );
-                    }
-                );
-            }
-
-
-            card.addEventListener(
-                "click",
-                () => {
-
-                    openDestination(
-                        destination
-                    );
-                }
-            );
-
-
-            container.appendChild(
-                card
-            );
-        }
-    );
-}
-
-
-/* ============================================================
-   RANDOMIZE
-   ============================================================ */
-
-async function randomizeDestinations() {
-
-    await loadRandomDestinations();
-}
-
-
-/* ============================================================
-   OPEN DESTINATION
-   ============================================================ */
-
-function openDestination(
-    destination
-) {
-
-    showPage(
-        "search"
-    );
-
-
-    const details =
-        document.getElementById(
-            "destinationDetails"
-        );
-
-
-    const content =
-        document.getElementById(
-            "destinationDetailsContent"
-        );
-
-
-    if (
-        !details ||
-        !content
-    ) {
-
-        return;
-    }
-
-
-    details.style.display =
-        "block";
-
-
-    content.innerHTML = `
-
-        <img
-            class="destination-detail-image"
-            src="${escapeHtml(
-                destination.image_url ||
-                ""
-            )}"
-            alt="${escapeHtml(
-                destination.name ||
-                "Destination"
-            )}"
-            loading="lazy"
-        >
-
-
-        <h2>
-
-            ${escapeHtml(
-                destination.name ||
-                ""
-            )}
-
-        </h2>
-
-
-        <p>
-
-            ${escapeHtml(
-                destination.country ||
-                ""
-            )}
-
-        </p>
-
-
-        <p>
-
-            ${escapeHtml(
-                destination.description ||
-                "No description available."
-            )}
-
-        </p>
-
-
-        <div class="destination-detail-grid">
-
-            <div class="destination-detail-meta">
-
-                <small>
-                    Region
-                </small>
-
-                <strong>
-
-                    ${escapeHtml(
-                        destination.region ||
-                        "—"
-                    )}
-
-                </strong>
-
-            </div>
-
-
-            <div class="destination-detail-meta">
-
-                <small>
-                    Latitude
-                </small>
-
-                <strong>
-
-                    ${escapeHtml(
-                        destination.latitude ??
-                        "—"
-                    )}
-
-                </strong>
-
-            </div>
-
-
-            <div class="destination-detail-meta">
-
-                <small>
-                    Longitude
-                </small>
-
-                <strong>
-
-                    ${escapeHtml(
-                        destination.longitude ??
-                        "—"
-                    )}
-
-                </strong>
-
-            </div>
-
-        </div>
-
-    `;
-}
-
-
-/* ============================================================
-   SEARCH DESTINATION
-   ============================================================ */
-
-async function searchDestination() {
-
-    const input =
-        document.getElementById(
-            "destinationSearchInput"
-        );
-
-
-    const result =
-        document.getElementById(
-            "destinationSearchResults"
-        );
-
-
-    const loading =
-        document.getElementById(
-            "destinationSearchLoading"
-        );
-
-
-    if (!input) {
-
-        return;
-    }
-
-
-    const query =
-        String(
-            input.value || ""
-        ).trim();
-
-
-    if (!query) {
-
-        setMessage(
-            "searchError",
-            "Please enter a destination."
-        );
-
-
-        return;
-    }
-
-
-    setMessage(
-        "searchError",
-        "",
-        false
-    );
-
-
-    if (loading) {
-
-        loading.style.display =
-            "block";
-
-
-        loading.textContent =
-            "Searching destination...";
-    }
-
-
-    if (result) {
-
-        result.innerHTML =
-            "";
-    }
-
-
-    try {
-
-        const response =
-            await API.searchDestination(
-                query
-            );
-
-
-        console.log(
-            "Search response:",
-            response
-        );
-
-
-        const destinations =
-            normalizeDestinations(
-                response
-            );
-
-
-        renderSearchDestination(
-            destinations
-        );
-
-    } catch (error) {
-
-        console.error(
-            "SEARCH ERROR:",
-            error
-        );
-
-
-        setMessage(
-            "searchError",
-            error.message ||
-            "Unable to search destination."
         );
 
     } finally {
 
-        if (loading) {
+        tripChatProcessing =
+            false;
 
-            loading.style.display =
-                "none";
-        }
-    }
-}
-
-
-/* ============================================================
-   RENDER SEARCH RESULTS
-   ============================================================ */
-
-function renderSearchDestination(
-    destinations
-) {
-
-    const result =
-        document.getElementById(
-            "destinationSearchResults"
+        chatSetTyping(
+            false
         );
 
-
-    if (!result) {
-
-        return;
     }
 
-
-    result.innerHTML =
-        "";
-
-
-    if (
-        !Array.isArray(
-            destinations
-        ) ||
-        !destinations.length
-    ) {
-
-        result.innerHTML = `
-
-            <div class="panel">
-
-                No destination found.
-
-            </div>
-
-        `;
-
-
-        return;
-    }
-
-
-    destinations.forEach(
-        item => {
-
-            const card =
-                document.createElement(
-                    "article"
-                );
-
-
-            card.className =
-                "search-result-card";
-
-
-            card.innerHTML = `
-
-                <img
-                    src="${escapeHtml(
-                        item.image_url ||
-                        ""
-                    )}"
-                    alt="${escapeHtml(
-                        item.name ||
-                        "Destination"
-                    )}"
-                    loading="lazy"
-                >
-
-
-                <div class="search-result-body">
-
-                    <h3>
-
-                        ${escapeHtml(
-                            item.name ||
-                            ""
-                        )}
-
-                    </h3>
-
-
-                    <p>
-
-                        ${escapeHtml(
-                            item.country ||
-                            ""
-                        )}
-
-                    </p>
-
-
-                    <p>
-
-                        ${escapeHtml(
-                            item.description ||
-                            "No description available."
-                        )}
-
-                    </p>
-
-
-                    <button
-                        class="btn btn-blue"
-                        type="button"
-                    >
-
-                        VIEW DESTINATION
-
-                    </button>
-
-                </div>
-
-            `;
-
-
-            const button =
-                card.querySelector(
-                    "button"
-                );
-
-
-            if (button) {
-
-                button.addEventListener(
-                    "click",
-                    () => {
-
-                        openDestination(
-                            item
-                        );
-                    }
-                );
-            }
-
-
-            result.appendChild(
-                card
-            );
-        }
-    );
-}
-
-
-/* ============================================================
-   SEARCH INITIALIZATION
-   ============================================================ */
-
-function initializeSearch() {
-
-    const input =
-        document.getElementById(
-            "destinationSearchInput"
-        );
-
-
-    const button =
-        document.getElementById(
-            "destinationSearchButton"
-        );
-
-
-    if (button) {
-
-        button.addEventListener(
-            "click",
-            event => {
-
-                event.preventDefault();
-
-                searchDestination();
-            }
-        );
-    }
-
-
-    if (input) {
-
-        input.addEventListener(
-            "keydown",
-            event => {
-
-                if (
-                    event.key ===
-                    "Enter"
-                ) {
-
-                    event.preventDefault();
-
-                    searchDestination();
-                }
-            }
-        );
-    }
-}
-
-
-/* ============================================================
-   NAVIGATION INITIALIZATION
-   ============================================================ */
-
-function initializeNavigation() {
-
-    document
-        .querySelectorAll(
-            ".nav-button"
-        )
-        .forEach(
-            button => {
-
-                button.addEventListener(
-                    "click",
-                    event => {
-
-                        event.preventDefault();
-
-
-                        const page =
-                            button.dataset.page;
-
-
-                        if (page) {
-
-                            showPage(
-                                page
-                            );
-                        }
-                    }
-                );
-            }
-        );
-}
-
-
-/* ============================================================
-   FORM INITIALIZATION
-   ============================================================ */
-
-function initializeForms() {
-
-    const departure =
-        document.getElementById(
-            "departure_location"
-        );
-
-
-    if (departure) {
-
-        departure.addEventListener(
-            "input",
-            updateCountryField
-        );
-    }
-
-
-    document
-        .querySelectorAll(
-            'input[name="trip_scope"]'
-        )
-        .forEach(
-            radio => {
-
-                radio.addEventListener(
-                    "change",
-                    updateCountryField
-                );
-            }
-        );
-
-
-    const basicForm =
-        document.getElementById(
-            "basicTripForm"
-        );
-
-
-    if (basicForm) {
-
-        basicForm.addEventListener(
-            "submit",
-            async event => {
-
-                event.preventDefault();
-
-
-                await saveBasicInformation();
-            }
-        );
-    }
-
-
-    const plannerForm =
-    document.getElementById(
-        "tripForm"
-    );
-
-if (plannerForm) {
-
-    plannerForm.addEventListener(
-        "submit",
-        event => {
-
-            event.preventDefault();
-
-            startTrip();
-
-        }
-    );
-
-}
-
-
-const startButton =
-    document.getElementById(
-        "startTripButton"
-    );
-
-if (startButton) {
-
-    startButton.addEventListener(
-        "click",
-        event => {
-
-            /*
-             * The inline HTML chat controller
-             * handles opening the visual chat scene.
-             *
-             * This handler handles the actual
-             * backend request.
-             */
-
-            event.preventDefault();
-
-            startTrip();
-
-        }
-    );
-
-}
-}
-
-
-/* ============================================================
-   RANDOM INITIALIZATION
-   ============================================================ */
-
-function initializeRandomPage() {
-
-    const button =
-        document.getElementById(
-            "randomizeButton"
-        );
-
-
-    if (!button) {
-
-        return;
-    }
-
-
-    /*
-     * We intentionally attach the listener
-     * only here.
-     *
-     * Do not also use:
-     *
-     * onclick="randomizeDestinations()"
-     */
-
-    button.addEventListener(
-        "click",
-        async event => {
-
-            event.preventDefault();
-
-
-            button.disabled =
-                true;
-
-
-            button.textContent =
-                "LOADING...";
-
-
-            try {
-
-                await randomizeDestinations();
-
-            } finally {
-
-                button.disabled =
-                    false;
-
-
-                button.textContent =
-                    "↻ RANDOMIZE";
-            }
-        }
-    );
-}
-
-
-/* ============================================================
-   MODAL INITIALIZATION
-   ============================================================ */
-
-function initializeModal() {
-
-    const modal =
-        document.getElementById(
-            "destinationModal"
-        );
-
-
-    if (!modal) {
-
-        return;
-    }
-
-
-    modal.addEventListener(
-        "click",
-        event => {
-
-            if (
-                event.target ===
-                modal
-            ) {
-
-                closeModal();
-            }
-        }
-    );
 }
 
 
@@ -4561,6 +3143,7 @@ function updateBudgetUI() {
 
             empty.style.display =
                 "block";
+
         }
 
 
@@ -4568,10 +3151,12 @@ function updateBudgetUI() {
 
             content.style.display =
                 "none";
+
         }
 
 
         return;
+
     }
 
 
@@ -4579,6 +3164,7 @@ function updateBudgetUI() {
 
         empty.style.display =
             "none";
+
     }
 
 
@@ -4586,28 +3172,8 @@ function updateBudgetUI() {
 
         content.style.display =
             "block";
+
     }
-
-
-    const total =
-        Number(
-            budget.total_budget ||
-            0
-        );
-
-
-    const spent =
-        Number(
-            budget.spent ||
-            0
-        );
-
-
-    const estimated =
-        Number(
-            budget.estimated_total ||
-            0
-        );
 
 
     const totalElement =
@@ -4638,8 +3204,9 @@ function updateBudgetUI() {
 
         totalElement.textContent =
             formatMoney(
-                total
+                budget.total_budget
             );
+
     }
 
 
@@ -4647,8 +3214,9 @@ function updateBudgetUI() {
 
         spentElement.textContent =
             formatMoney(
-                spent
+                budget.spent
             );
+
     }
 
 
@@ -4658,6 +3226,7 @@ function updateBudgetUI() {
             formatMoney(
                 budget.remaining
             );
+
     }
 
 
@@ -4665,8 +3234,9 @@ function updateBudgetUI() {
 
         estimatedElement.textContent =
             formatMoney(
-                estimated
+                budget.estimated_total
             );
+
     }
 
 
@@ -4678,6 +3248,27 @@ function updateBudgetUI() {
 
     if (progress) {
 
+        const total =
+            Number(
+                budget.total_budget ||
+                0
+            );
+
+
+        const spent =
+            Number(
+                budget.spent ||
+                0
+            );
+
+
+        const estimated =
+            Number(
+                budget.estimated_total ||
+                0
+            );
+
+
         const used =
             spent +
             estimated;
@@ -4685,19 +3276,1036 @@ function updateBudgetUI() {
 
         const percentage =
             total > 0
+
                 ? Math.min(
                     100,
                     (
                         used /
                         total
-                    ) * 100
+                    ) *
+                    100
                 )
+
                 : 0;
 
 
         progress.style.width =
             `${percentage}%`;
+
     }
+
+
+    const summary =
+        document.getElementById(
+            "budgetSummary"
+        );
+
+
+    if (summary) {
+
+        const total =
+            Number(
+                budget.total_budget ||
+                0
+            );
+
+
+        const spent =
+            Number(
+                budget.spent ||
+                0
+            );
+
+
+        const estimated =
+            Number(
+                budget.estimated_total ||
+                0
+            );
+
+
+        const used =
+            spent +
+            estimated;
+
+
+        const percentage =
+            total > 0
+
+                ? Math.min(
+                    100,
+                    (
+                        used /
+                        total
+                    ) *
+                    100
+                )
+
+                : 0;
+
+
+        summary.textContent =
+            `${percentage.toFixed(1)}% of the budget would be used if the current estimate were committed.`;
+
+    }
+
+}
+
+
+/* ============================================================
+   RANDOM DESTINATIONS
+   ============================================================ */
+
+async function loadRandomDestination() {
+
+    const container =
+        document.getElementById(
+            "randomDestination"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML = `
+
+        <div
+            class="loading"
+            style="display:block;"
+        >
+
+            Loading a destination...
+
+        </div>
+
+    `;
+
+
+    try {
+
+        const result =
+            await API.randomDestinations(
+                1
+            );
+
+
+        const destinations =
+            result?.destinations ||
+            [];
+
+
+        if (!destinations.length) {
+
+            throw new Error(
+                "No destination was returned."
+            );
+
+        }
+
+
+        const destination =
+            destinations[0];
+
+
+        container.innerHTML = `
+
+            <article class="destination-card">
+
+                ${
+                    destination.image_url
+                        ? `
+                            <img
+                                src="${escapeHtml(
+                                    destination.image_url
+                                )}"
+                                alt="${escapeHtml(
+                                    destination.name ||
+                                    "Destination"
+                                )}"
+                                style="
+                                    width:100%;
+                                    height:260px;
+                                    object-fit:cover;
+                                    border-radius:14px;
+                                "
+                            >
+                        `
+                        : ""
+                }
+
+
+                <h2>
+
+                    ${escapeHtml(
+                        destination.name ||
+                        "Destination"
+                    )}
+
+                </h2>
+
+
+                <div class="result-country">
+
+                    ${escapeHtml(
+                        destination.country ||
+                        ""
+                    )}
+
+                </div>
+
+
+                ${
+                    destination.description
+                        ? `
+                            <p>
+                                ${escapeHtml(
+                                    destination.description
+                                )}
+                            </p>
+                        `
+                        : ""
+                }
+
+            </article>
+
+        `;
+
+    } catch (error) {
+
+        container.innerHTML = `
+
+            <div
+                class="error"
+                style="display:block;"
+            >
+
+                ${escapeHtml(
+                    error.message
+                )}
+
+            </div>
+
+        `;
+
+    }
+
+}
+
+
+/* ============================================================
+   HOME DESTINATIONS
+   ============================================================ */
+
+async function loadHomeDestinations() {
+
+    const container =
+        document.getElementById(
+            "homeDestinations"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    try {
+
+        const result =
+            await API.request(
+                "/api/destinations/home",
+                "GET"
+            );
+
+
+        const destinations =
+            Array.isArray(
+                result
+            )
+                ? result
+                : (
+                    result?.destinations ||
+                    []
+                );
+
+
+        container.innerHTML =
+            "";
+
+
+        destinations.forEach(
+            destination => {
+
+                const card =
+                    document.createElement(
+                        "article"
+                    );
+
+
+                card.className =
+                    "destination-card";
+
+
+                card.innerHTML = `
+
+                    ${
+                        destination.image_url
+                            ? `
+                                <img
+                                    src="${escapeHtml(
+                                        destination.image_url
+                                    )}"
+                                    alt="${escapeHtml(
+                                        destination.name ||
+                                        "Destination"
+                                    )}"
+                                    style="
+                                        width:100%;
+                                        height:180px;
+                                        object-fit:cover;
+                                        border-radius:12px;
+                                    "
+                                >
+                            `
+                            : ""
+                    }
+
+
+                    <h3>
+
+                        ${escapeHtml(
+                            destination.name ||
+                            "Destination"
+                        )}
+
+                    </h3>
+
+
+                    <div class="result-country">
+
+                        ${escapeHtml(
+                            destination.country ||
+                            ""
+                        )}
+
+                    </div>
+
+                `;
+
+
+                container.appendChild(
+                    card
+                );
+
+            }
+        );
+
+    } catch (error) {
+
+        console.warn(
+            "HOME DESTINATIONS ERROR:",
+            error
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   SEARCH
+   ============================================================ */
+
+function initializeSearch() {
+
+    const searchBox =
+        document.getElementById(
+            "searchBox"
+        );
+
+
+    if (!searchBox) {
+
+        return;
+
+    }
+
+
+    searchBox.addEventListener(
+        "input",
+        event => {
+
+            const query =
+                String(
+                    event.target.value ||
+                    ""
+                )
+                    .toLowerCase()
+                    .trim();
+
+
+            document
+                .querySelectorAll(
+                    ".destination-card"
+                )
+                .forEach(
+                    card => {
+
+                        card.style.display =
+
+                            !query ||
+                            card.textContent
+                                .toLowerCase()
+                                .includes(
+                                    query
+                                )
+
+                                ? ""
+                                : "none";
+
+                    }
+                );
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   TRIP CHAT BACKEND
+   ============================================================ */
+
+function initializeTripChatBackend() {
+
+    const chatForm =
+        document.getElementById(
+            "tripChatForm"
+        );
+
+
+    const chatInput =
+        document.getElementById(
+            "tripChatInput"
+        );
+
+
+    if (
+        !chatForm ||
+        !chatInput
+    ) {
+
+        return;
+
+    }
+
+
+    document.addEventListener(
+
+        "wanderlust:chat-message",
+
+        event => {
+
+            const message =
+                event?.detail?.message;
+
+
+            if (
+                !message
+            ) {
+
+                return;
+
+            }
+
+
+            const clean =
+                String(
+                    message
+                ).trim();
+
+
+            if (!clean) {
+
+                return;
+
+            }
+
+
+            /*
+             * The initial user message is already being
+             * handled by /api/trip/start.
+             */
+
+            if (
+                tripStartInProgress
+            ) {
+
+                return;
+
+            }
+
+
+            /*
+             * After the initial search, every new chat
+             * message becomes an update request.
+             */
+
+            updateTrip(
+                clean
+            );
+
+        }
+
+    );
+
+}
+
+
+/* ============================================================
+   CHAT CLOSE
+   ============================================================ */
+
+window.wanderlustCloseTripChat =
+function () {
+
+    const scene =
+        document.getElementById(
+            "tripChatScene"
+        );
+
+
+    const panel =
+        document.getElementById(
+            "preferencePanel"
+        );
+
+
+    const messages =
+        document.getElementById(
+            "tripChatMessages"
+        );
+
+
+    if (scene) {
+
+        scene.classList.remove(
+            "open"
+        );
+
+    }
+
+
+    if (panel) {
+
+        panel.style.display =
+            "";
+
+    }
+
+
+    if (messages) {
+
+        messages.innerHTML =
+            "";
+
+    }
+
+
+    chatStarted =
+        false;
+
+
+    tripChatProcessing =
+        false;
+
+};
+
+
+/* ============================================================
+   CLEAR SELECTION
+   ============================================================ */
+
+function clearSelection() {
+
+    const panel =
+        document.getElementById(
+            "selectionPanel"
+        );
+
+
+    if (panel) {
+
+        panel.style.display =
+            "none";
+
+    }
+
+
+    if (!currentTrip) {
+
+        return;
+
+    }
+
+
+    currentTrip.selected_trip =
+        null;
+
+
+    currentTrip.selected_destination =
+        null;
+
+
+    currentTrip.status =
+        "awaiting_selection";
+
+}
+
+
+/* ============================================================
+   CANCEL CURRENT TRIP
+   ============================================================ */
+
+async function cancelCurrentTrip() {
+
+    if (
+        !currentTrip?.trip_id
+    ) {
+
+        return;
+
+    }
+
+
+    if (
+        !confirm(
+            "Cancel this planning session?"
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        currentTrip =
+            await API.cancelTrip(
+                currentTrip.trip_id
+            );
+
+
+        const panel =
+            document.getElementById(
+                "selectionPanel"
+            );
+
+
+        if (panel) {
+
+            panel.style.display =
+                "none";
+
+        }
+
+
+        updateBudgetUI();
+
+
+        chatAddAssistant(
+            "The current trip planning session has been cancelled."
+        );
+
+    } catch (error) {
+
+        console.error(
+            "CANCEL TRIP ERROR:",
+            error
+        );
+
+
+        alert(
+            error.message
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   DELETE CURRENT TRIP
+   ============================================================ */
+
+async function deleteCurrentTrip() {
+
+    if (
+        !currentTrip?.trip_id
+    ) {
+
+        return;
+
+    }
+
+
+    if (
+        !confirm(
+            "Delete this trip session permanently?"
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        await API.deleteTrip(
+            currentTrip.trip_id
+        );
+
+
+        currentTrip =
+            null;
+
+
+        currentTripId =
+            null;
+
+
+        basicTripData =
+            null;
+
+
+        localStorage.removeItem(
+            STORAGE_KEYS.tripId
+        );
+
+
+        localStorage.removeItem(
+            STORAGE_KEYS.basicTrip
+        );
+
+
+        resetPlanner();
+
+        showPage(
+            "home"
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "DELETE TRIP ERROR:",
+            error
+        );
+
+
+        alert(
+            error.message
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   RESET PLANNER
+   ============================================================ */
+
+function resetPlanner() {
+
+    const results =
+        document.getElementById(
+            "resultsSection"
+        );
+
+
+    const selection =
+        document.getElementById(
+            "selectionPanel"
+        );
+
+
+    if (results) {
+
+        results.style.display =
+            "none";
+
+    }
+
+
+    if (selection) {
+
+        selection.style.display =
+            "none";
+
+    }
+
+
+    currentTrip =
+        null;
+
+
+    tripStartInProgress =
+        false;
+
+
+    tripChatProcessing =
+        false;
+
+
+    window.scrollTo({
+
+        top:
+            0,
+
+        behavior:
+            "smooth"
+
+    });
+
+}
+
+
+/* ============================================================
+   STATUS
+   ============================================================ */
+
+async function refreshStatus() {
+
+    if (
+        !currentTripId
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        currentTrip =
+            await API.getTripStatus(
+                currentTripId
+            );
+
+
+        updateBudgetUI();
+
+
+        if (
+            currentTrip.status ===
+            "awaiting_selection"
+        ) {
+
+            renderTripResults(
+                currentTrip
+            );
+
+
+            const results =
+                document.getElementById(
+                    "resultsSection"
+                );
+
+
+            if (results) {
+
+                results.style.display =
+                    "block";
+
+            }
+
+        }
+
+
+        if (
+            currentTrip.status ===
+            "selected"
+        ) {
+
+            renderSelectedTrip(
+                currentTrip
+            );
+
+        }
+
+    } catch (error) {
+
+        console.warn(
+            "STATUS ERROR:",
+            error
+        );
+
+    }
+
+}
+
+
+/* ============================================================
+   FORM INITIALIZATION
+   ============================================================ */
+
+function initializeForms() {
+
+    const basicForm =
+        document.getElementById(
+            "basicTripForm"
+        );
+
+
+    if (basicForm) {
+
+        basicForm.addEventListener(
+            "submit",
+            async event => {
+
+                event.preventDefault();
+
+                await saveBasicInformation();
+
+            }
+        );
+
+    }
+
+
+    const tripForm =
+        document.getElementById(
+            "tripForm"
+        );
+
+
+    if (tripForm) {
+
+        tripForm.addEventListener(
+            "submit",
+            event => {
+
+                event.preventDefault();
+
+                startTrip();
+
+            }
+        );
+
+    }
+
+
+    const departure =
+        document.getElementById(
+            "departure_location"
+        );
+
+
+    if (departure) {
+
+        departure.addEventListener(
+            "input",
+            updateCountryField
+        );
+
+    }
+
+
+    document
+        .querySelectorAll(
+            'input[name="trip_scope"]'
+        )
+        .forEach(
+            input => {
+
+                input.addEventListener(
+                    "change",
+                    updateCountryField
+                );
+
+            }
+        );
+
+
+    updateCountryField();
+
+}
+
+
+/* ============================================================
+   NAVIGATION INITIALIZATION
+   ============================================================ */
+
+function initializeNavigation() {
+
+    document
+        .querySelectorAll(
+            ".nav-button"
+        )
+        .forEach(
+            button => {
+
+                button.addEventListener(
+                    "click",
+                    () => {
+
+                        showPage(
+                            button.dataset.page
+                        );
+
+                    }
+                );
+
+            }
+        );
+
+}
+
+
+/* ============================================================
+   MODAL INITIALIZATION
+   ============================================================ */
+
+function initializeModal() {
+
+    const modal =
+        document.getElementById(
+            "destinationModal"
+        );
+
+
+    if (!modal) {
+
+        return;
+
+    }
+
+
+    modal.addEventListener(
+        "click",
+        event => {
+
+            if (
+                event.target ===
+                modal
+            ) {
+
+                closeModal();
+
+            }
+
+        }
+    );
+
 }
 
 
@@ -4714,15 +4322,13 @@ document.addEventListener(
         );
 
 
-        /*
-         * Initialize UI systems first.
-         */
+        /* ----------------------------------------------------
+           Initialize UI.
+        ---------------------------------------------------- */
 
         initializeNavigation();
 
         initializeForms();
-
-        initializeRandomPage();
 
         initializeSearch();
 
@@ -4731,9 +4337,9 @@ document.addEventListener(
         initializeTripChatBackend();
 
 
-        /*
-         * Recover saved trip ID.
-         */
+        /* ----------------------------------------------------
+           Recover trip ID.
+        ---------------------------------------------------- */
 
         const storedTripId =
             Number(
@@ -4753,18 +4359,12 @@ document.addEventListener(
             currentTripId =
                 storedTripId;
 
-
-            console.log(
-                "Recovered trip ID:",
-                currentTripId
-            );
         }
 
 
-        /*
-         * Recover cached basic information
-         * before asking Flask.
-         */
+        /* ----------------------------------------------------
+           Recover cached basic information.
+        ---------------------------------------------------- */
 
         const cachedBasicTrip =
             localStorage.getItem(
@@ -4785,13 +4385,15 @@ document.addEventListener(
 
                 basicTripData =
                     null;
+
             }
+
         }
 
 
-        /*
-         * Check Flask first.
-         */
+        /* ----------------------------------------------------
+           Flask health.
+        ---------------------------------------------------- */
 
         try {
 
@@ -4808,25 +4410,26 @@ document.addEventListener(
                 "Flask backend health check failed:",
                 error
             );
+
         }
 
 
-        /*
-         * Load basic trip from SQLite
-         * when a trip ID exists.
-         */
+        /* ----------------------------------------------------
+           Load saved basic trip.
+        ---------------------------------------------------- */
 
         if (
             currentTripId
         ) {
 
             await loadBasicInformation();
+
         }
 
 
-        /*
-         * Home destinations.
-         */
+        /* ----------------------------------------------------
+           Home page.
+        ---------------------------------------------------- */
 
         await loadHomeDestinations();
 
@@ -4834,5 +4437,6 @@ document.addEventListener(
         console.log(
             "Wanderlust frontend initialized."
         );
+
     }
 );
