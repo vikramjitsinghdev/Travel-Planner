@@ -1,690 +1,988 @@
 import json
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 
-from dotenv import load_dotenv
-from google import genai
+from typing import Dict, Any, List, Optional
 
-from ai.research_agent import ResearchAgent
-import pexels_service
-
-
-load_dotenv()
+from services.tavily_service import TavilyService
+from services.pexel_service import PexelsService
+from services.map_service import MapService
 
 
 class TravelAgent:
     """
-    TravelAgent is responsible for:
+    Travel Agent
 
-    1. Receiving the user's travel request.
-    2. Asking Gemini to select EXACTLY 3 destinations.
-    3. Sending those 3 destinations to ResearchAgent.
-    4. Combining research + images with the destinations.
-    5. Returning one consistent destination schema.
+    Responsibility:
+        1. Receive exactly 3 destinations from ResearchAgent.
+        2. Search Tavily for basic destination information.
+        3. Retrieve destination image URLs from Pexels.
+        4. Retrieve destination coordinates from MapTiler.
+        5. Return the information in structured JSON.
 
-    TravelAgent does NOT perform web research itself.
-    ResearchAgent owns the research process.
+    TravelAgent does NOT:
+        - select destinations
+        - research worker-level travel costs
+        - recheck worker results
+        - call workers
+        - use an LLM
+        - calculate budgets
+        - create itineraries
+        - access databases
+
+    Input:
+
+        {
+            "destinations": [
+                {
+                    "destination": "Tokyo",
+                    "country": "Japan"
+                },
+                {
+                    "destination": "Kyoto",
+                    "country": "Japan"
+                },
+                {
+                    "destination": "Osaka",
+                    "country": "Japan"
+                }
+            ]
+        }
+
+    Output:
+
+        {
+            "destinations": [
+                {
+                    "destination": "Tokyo",
+                    "country": "Japan",
+                    "basic_info": "...",
+                    "images": [
+                        "https://..."
+                    ],
+                    "map_coordinates": {
+                        "latitude": 35.6762,
+                        "longitude": 139.6503
+                    }
+                }
+            ]
+        }
     """
 
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
 
-        if not self.api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not configured."
-            )
+        # =====================================================
+        # HELPER SERVICES
+        # =====================================================
 
-        self.model = (
-            os.getenv("GEMINI_TRAVEL_MODEL")
-            or os.getenv("GEMINI_MODEL")
-            or "gemini-3.6-flash"
+        self.tavily = TavilyService()
+        self.pexels = PexelsService()
+        self.map_service = MapService()
+
+    # =========================================================
+    # PUBLIC METHOD
+    # =========================================================
+
+    def process(
+        self,
+        research_result: Any
+    ) -> Dict[str, Any]:
+        """
+        Receive the destinations from ResearchAgent and
+        enrich each destination with:
+
+            - basic information
+            - Pexels images
+            - MapTiler coordinates
+
+        The worker results are NOT used here.
+        """
+
+        destinations = self._extract_destinations(
+            research_result
         )
 
-        self.client = genai.Client(api_key=self.api_key)
+        self._validate_destinations(
+            destinations
+        )
 
-        # ResearchAgent owns all research workers and Ollama verification.
-        self.research_agent = ResearchAgent()
+        final_results = []
 
-        self.max_workers = 3
+        # -----------------------------------------------------
+        # Process each ResearchAgent destination
+        # -----------------------------------------------------
 
-    # ============================================================
-    # PUBLIC API
-    # ============================================================
+        for destination_data in destinations:
 
-    def get_trip_recommendations(
-        self,
-        user_input,
-        preferences=None,
-        budget=None,
-        trip_information=None,
-    ):
-        """
-        Main entry point used by main.py.
+            destination = destination_data[
+                "destination"
+            ]
 
-        Returns:
+            country = destination_data[
+                "country"
+            ]
 
-        {
-            "success": True,
-            "candidates": [...],
-            "research": {...},
-            "travel_options": [...]
+            # -------------------------------------------------
+            # Tavily
+            # -------------------------------------------------
+
+            basic_info = self._get_basic_information(
+                destination,
+                country
+            )
+
+            # -------------------------------------------------
+            # Pexels
+            # -------------------------------------------------
+
+            images = self._get_images(
+                destination,
+                country
+            )
+
+            # -------------------------------------------------
+            # MapTiler
+            # -------------------------------------------------
+
+            coordinates = self._get_coordinates(
+                destination,
+                country
+            )
+
+            # -------------------------------------------------
+            # Final destination object
+            # -------------------------------------------------
+
+            final_results.append(
+                {
+                    "destination": destination,
+                    "country": country,
+                    "basic_info": basic_info,
+                    "images": images,
+                    "map_coordinates": coordinates
+                }
+            )
+
+        return {
+            "destinations": final_results
         }
-        """
 
-        try:
-            candidates = self.find_candidates(
-                user_input=user_input,
-                preferences=preferences,
-                budget=budget,
-                trip_information=trip_information,
-            )
+    # =========================================================
+    # DESTINATION EXTRACTION
+    # =========================================================
 
-            if not candidates:
-                return {
-                    "success": False,
-                    "error": "Gemini did not return any destinations.",
-                    "candidates": [],
-                    "research": {},
-                    "travel_options": [],
-                }
-
-            if len(candidates) != 3:
-                return {
-                    "success": False,
-                    "error": (
-                        f"TravelAgent requires exactly 3 destinations, "
-                        f"but Gemini returned {len(candidates)}."
-                    ),
-                    "candidates": candidates,
-                    "research": {},
-                    "travel_options": [],
-                }
-
-            result = self.research_destinations(
-                candidates=candidates,
-                trip_requirements=preferences,
-                trip_information=trip_information,
-            )
-
-            return result
-
-        except Exception as e:
-            print(f"[TravelAgent] ERROR: {e}")
-
-            return {
-                "success": False,
-                "error": str(e),
-                "candidates": [],
-                "research": {},
-                "travel_options": [],
-            }
-
-    # ============================================================
-    # DESTINATION SELECTION
-    # ============================================================
-
-    def find_candidates(
+    def _extract_destinations(
         self,
-        user_input,
-        preferences=None,
-        budget=None,
-        trip_information=None,
-    ):
+        research_result: Any
+    ) -> List[Dict[str, str]]:
         """
-        Ask Gemini to select exactly 3 destinations.
-
-        IMPORTANT:
-        This method only selects destinations.
-        It does not research them.
+        Extract destinations from ResearchAgent output.
         """
 
-        preferences = preferences or {}
-        trip_information = trip_information or {}
+        if isinstance(
+            research_result,
+            dict
+        ):
 
-        prompt = f"""
-You are the destination-selection component of an AI travel planner.
+            destinations = research_result.get(
+                "destinations"
+            )
 
-Your ONLY job is to select EXACTLY 3 destinations that best fit the
-traveler's requirements.
+            if destinations is None:
 
-DO NOT perform detailed research.
-DO NOT invent hotels, flights, prices, weather statistics, or schedules.
-DO NOT return more or fewer than 3 destinations.
+                raise ValueError(
+                    "ResearchAgent result is missing "
+                    "'destinations'."
+                )
 
-USER REQUEST:
-{user_input}
+            return destinations
 
-MOOD / TRAVEL REQUIREMENTS:
-{json.dumps(preferences, indent=2, ensure_ascii=False)}
+        if isinstance(
+            research_result,
+            list
+        ):
 
-BASIC TRIP INFORMATION:
-{json.dumps(trip_information, indent=2, ensure_ascii=False)}
+            return research_result
 
-BUDGET:
-{json.dumps(budget, indent=2, ensure_ascii=False)}
-
-Return ONLY valid JSON.
-
-Required format:
-
-{{
-    "candidates": [
-        {{
-            "name": "Destination name",
-            "country": "Country",
-            "description": "Short description",
-            "reason": "Why this destination matches the traveler",
-            "research_priority": 1
-        }},
-        {{
-            "name": "Destination name",
-            "country": "Country",
-            "description": "Short description",
-            "reason": "Why this destination matches the traveler",
-            "research_priority": 2
-        }},
-        {{
-            "name": "Destination name",
-            "country": "Country",
-            "description": "Short description",
-            "reason": "Why this destination matches the traveler",
-            "research_priority": 3
-        }}
-    ]
-}}
-
-Rules:
-
-- Exactly 3 candidates.
-- Every candidate MUST have a non-empty "name".
-- Every candidate MUST have a non-empty "country".
-- Do not use "destination" instead of "name".
-- Keep descriptions concise.
-- Do not fabricate detailed factual information.
-"""
-
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
+        raise TypeError(
+            "TravelAgent expected a ResearchAgent "
+            "result dictionary or destination list."
         )
 
-        raw = self._extract_response_text(response)
+    # =========================================================
+    # DESTINATION VALIDATION
+    # =========================================================
 
-        data = self._parse_json(raw)
-
-        candidates = data.get("candidates", [])
-
-        if not isinstance(candidates, list):
-            raise ValueError(
-                "Gemini response contains an invalid candidates field."
-            )
-
-        if len(candidates) != 3:
-            raise ValueError(
-                f"Gemini returned {len(candidates)} candidates instead of exactly 3."
-            )
-
-        normalized = []
-
-        for index, candidate in enumerate(candidates, start=1):
-
-            if not isinstance(candidate, dict):
-                raise ValueError(
-                    f"Candidate {index} is not a JSON object."
-                )
-
-            # Canonical field = name.
-            name = (
-                candidate.get("name")
-                or candidate.get("destination")
-                or ""
-            ).strip()
-
-            country = (
-                candidate.get("country")
-                or ""
-            ).strip()
-
-            if not name:
-                raise ValueError(
-                    f"Candidate {index} has no valid name."
-                )
-
-            if not country:
-                raise ValueError(
-                    f"Candidate {index} has no valid country."
-                )
-
-            normalized_candidate = {
-                "name": name,
-                "country": country,
-                "description": (
-                    candidate.get("description")
-                    or ""
-                ).strip(),
-                "reason": (
-                    candidate.get("reason")
-                    or ""
-                ).strip(),
-                "research_priority": (
-                    candidate.get("research_priority")
-                    or index
-                ),
-            }
-
-            # Compatibility alias.
-            normalized_candidate["destination"] = name
-
-            normalized.append(normalized_candidate)
-
-        return normalized
-
-    # ============================================================
-    # RESEARCH
-    # ============================================================
-
-    def research_destinations(
+    def _validate_destinations(
         self,
-        candidates,
-        trip_requirements=None,
-        trip_information=None,
-    ):
+        destinations: List[Dict[str, str]]
+    ) -> None:
         """
-        Send exactly the 3 selected destinations to ResearchAgent.
-
-        Pexels and research run concurrently.
+        Validate the exact three destinations generated
+        by ResearchAgent.
         """
 
-        if len(candidates) != 3:
+        if not isinstance(
+            destinations,
+            list
+        ):
+
+            raise TypeError(
+                "destinations must be a list."
+            )
+
+        if len(destinations) != 3:
+
             raise ValueError(
-                "research_destinations requires exactly 3 candidates."
+                "TravelAgent requires exactly 3 destinations."
             )
 
-        trip_requirements = trip_requirements or {}
-        trip_information = trip_information or {}
+        seen = set()
 
-        print("\n[TravelAgent] Starting ResearchAgent...")
+        for index, destination_data in enumerate(
+            destinations,
+            start=1
+        ):
 
-        research_result = None
-        image_results = {}
+            if not isinstance(
+                destination_data,
+                dict
+            ):
 
-        # --------------------------------------------------------
-        # ResearchAgent
-        # --------------------------------------------------------
-
-        try:
-            research_result = self.research_agent.research(
-                destinations=candidates,
-                trip_requirements=trip_requirements,
-                trip_information=trip_information,
-            )
-
-        except TypeError:
-            # Compatibility with an older ResearchAgent signature.
-            research_result = self.research_agent.research(
-                candidates,
-                trip_requirements,
-            )
-
-        except Exception as e:
-            print(
-                f"[TravelAgent] ResearchAgent failed: {e}"
-            )
-
-            research_result = {
-                "success": False,
-                "destinations": {},
-                "workers": {},
-                "verification": {},
-                "errors": [str(e)],
-            }
-
-        # --------------------------------------------------------
-        # Pexels
-        # --------------------------------------------------------
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
-
-            futures = {}
-
-            for index, candidate in enumerate(candidates, start=1):
-
-                future = executor.submit(
-                    self._get_destination_image,
-                    candidate["name"],
-                    candidate["country"],
+                raise TypeError(
+                    f"Destination {index} must be an object."
                 )
 
-                futures[index] = future
+            destination = destination_data.get(
+                "destination"
+            )
 
-            for index, future in futures.items():
+            country = destination_data.get(
+                "country"
+            )
 
-                try:
-                    image_results[index] = future.result()
+            if not isinstance(
+                destination,
+                str
+            ) or not destination.strip():
 
-                except Exception as e:
-                    print(
-                        f"[TravelAgent] Pexels failed for destination "
-                        f"{index}: {e}"
+                raise ValueError(
+                    f"Destination {index} has an invalid name."
+                )
+
+            if not isinstance(
+                country,
+                str
+            ) or not country.strip():
+
+                raise ValueError(
+                    f"Destination {index} has an invalid country."
+                )
+
+            key = self._destination_key(
+                destination,
+                country
+            )
+
+            if key in seen:
+
+                raise ValueError(
+                    "ResearchAgent provided duplicate "
+                    "destinations."
+                )
+
+            seen.add(
+                key
+            )
+
+    # =========================================================
+    # TAVILY
+    # =========================================================
+
+    def _get_basic_information(
+        self,
+        destination: str,
+        country: str
+    ) -> str:
+        """
+        Search Tavily for general destination information.
+
+        The output is a single approximately 100-200 word
+        paragraph assembled from the returned search content.
+        """
+
+        destination_name = (
+            f"{destination}, {country}"
+        )
+
+        queries = [
+            (
+                f"{destination_name} travel destination "
+                f"overview"
+            ),
+            (
+                f"{destination_name} tourist information "
+                f"culture attractions"
+            ),
+            (
+                f"{destination_name} things to know "
+                f"for tourists"
+            ),
+            (
+                f"{destination_name} best time to visit "
+                f"travel"
+            )
+        ]
+
+        search_results = self.tavily.search_many(
+            queries,
+            max_results=5
+        )
+
+        text_blocks = []
+
+        for search in search_results:
+
+            results = search.get(
+                "results",
+                []
+            )
+
+            for result in results:
+
+                content = result.get(
+                    "content",
+                    ""
+                )
+
+                if not content:
+                    continue
+
+                cleaned = self._clean_text(
+                    content
+                )
+
+                if cleaned:
+                    text_blocks.append(
+                        cleaned
                     )
 
-                    image_results[index] = None
-
-        # --------------------------------------------------------
-        # Combine
-        # --------------------------------------------------------
-
-        return self._combine_results(
-            candidates=candidates,
-            research_result=research_result,
-            image_results=image_results,
+        return self._build_information_paragraph(
+            text_blocks
         )
 
-    # ============================================================
+    # =========================================================
+    # BUILD BASIC INFORMATION PARAGRAPH
+    # =========================================================
+
+    def _build_information_paragraph(
+        self,
+        text_blocks: List[str]
+    ) -> str:
+        """
+        Build a single 100-200 word paragraph from Tavily
+        search results.
+
+        No new factual information is generated here.
+        """
+
+        if not text_blocks:
+
+            return (
+                "Basic destination information could not "
+                "be retrieved from the available web search."
+            )
+
+        # -----------------------------------------------------
+        # Combine results
+        # -----------------------------------------------------
+
+        combined = " ".join(
+            text_blocks
+        )
+
+        combined = self._clean_text(
+            combined
+        )
+
+        # -----------------------------------------------------
+        # Split into sentences
+        # -----------------------------------------------------
+
+        sentences = re.split(
+            r"(?<=[.!?])\s+",
+            combined
+        )
+
+        selected = []
+        word_count = 0
+
+        for sentence in sentences:
+
+            sentence = sentence.strip()
+
+            if not sentence:
+                continue
+
+            words = sentence.split()
+
+            if not words:
+                continue
+
+            # Once we have at least 100 words, stop before
+            # going over 200.
+            if (
+                word_count >= 100
+                and word_count + len(words) > 200
+            ):
+                break
+
+            selected.append(
+                sentence
+            )
+
+            word_count += len(
+                words
+            )
+
+            if word_count >= 100:
+                break
+
+        # -----------------------------------------------------
+        # Fallback
+        # -----------------------------------------------------
+
+        if not selected:
+
+            words = combined.split()
+
+            return " ".join(
+                words[:200]
+            )
+
+        return " ".join(
+            selected
+        ).strip()
+
+    # =========================================================
+    # TEXT CLEANING
+    # =========================================================
+
+    def _clean_text(
+        self,
+        text: str
+    ) -> str:
+        """
+        Clean search-result text.
+        """
+
+        if not isinstance(
+            text,
+            str
+        ):
+            return ""
+
+        text = text.replace(
+            "\n",
+            " "
+        )
+
+        text = text.replace(
+            "\r",
+            " "
+        )
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text
+        )
+
+        return text.strip()
+
+    # =========================================================
     # PEXELS
-    # ============================================================
+    # =========================================================
 
-    def _get_destination_image(self, name, country):
+    def _get_images(
+        self,
+        destination: str,
+        country: str
+    ) -> List[str]:
         """
-        Retrieve a Pexels image.
+        Get image URLs from Pexels.
+        """
 
-        Failure is non-fatal.
-        """
+        query = (
+            f"{destination}, {country} travel"
+        )
 
         try:
 
-            query = f"{name} {country}"
+            response = self.pexels.search(
+                query
+            )
 
-            # Support the existing pexels_service implementation.
-            if hasattr(pexels_service, "search_destination_image"):
-                return pexels_service.search_destination_image(query)
+        except Exception as exc:
 
-            if hasattr(pexels_service, "get_destination_image"):
-                return pexels_service.get_destination_image(
-                    name,
-                    country,
-                )
-
-            if hasattr(pexels_service, "search_images"):
-                results = pexels_service.search_images(query)
-
-                if results:
-                    return results[0]
-
-            return None
-
-        except Exception as e:
             print(
-                f"[TravelAgent] Image lookup failed for "
-                f"{name}: {e}"
+                f"Pexels search failed for "
+                f"{destination}: {exc}"
             )
 
-            return None
+            return []
 
-    # ============================================================
-    # COMBINE
-    # ============================================================
+        return self._extract_image_urls(
+            response
+        )
 
-    def _combine_results(
+    # =========================================================
+    # IMAGE URL EXTRACTION
+    # =========================================================
+
+    def _extract_image_urls(
         self,
-        candidates,
-        research_result,
-        image_results,
-    ):
+        response: Any
+    ) -> List[str]:
         """
-        Combine:
-
-        Gemini candidate
-        +
-        Worker research
-        +
-        Pexels image
-
-        into one canonical destination object.
+        Extract image URLs from common Pexels response
+        structures.
         """
-
-        workers = {}
-
-        if isinstance(research_result, dict):
-            workers = research_result.get("workers", {}) or {}
-
-        final_destinations = []
-
-        for index, candidate in enumerate(candidates, start=1):
-
-            worker_key = f"worker_{index}"
-
-            worker_result = workers.get(
-                worker_key,
-                {}
-            )
-
-            if not isinstance(worker_result, dict):
-                worker_result = {}
-
-            worker_success = bool(
-                worker_result.get("success")
-            )
-
-            research_data = worker_result.get(
-                "research"
-            )
-
-            if research_data is None:
-                research_data = worker_result.get(
-                    "data"
-                )
-
-            if research_data is None:
-                research_data = {}
-
-            # ----------------------------------------------------
-            # CANONICAL SCHEMA
-            # ----------------------------------------------------
-
-            destination = {
-                "rank": index,
-
-                # CANONICAL NAME
-                "name": candidate["name"],
-
-                "country": candidate["country"],
-
-                "description": candidate.get(
-                    "description",
-                    ""
-                ),
-
-                "reason": candidate.get(
-                    "reason",
-                    ""
-                ),
-
-                "research_priority": candidate.get(
-                    "research_priority",
-                    index
-                ),
-
-                "image": image_results.get(index),
-
-                "research": research_data,
-
-                "research_success": worker_success,
-
-                "worker": worker_key,
-            }
-
-            # ----------------------------------------------------
-            # BACKWARD COMPATIBILITY
-            # ----------------------------------------------------
-
-            destination["destination"] = destination["name"]
-
-            final_destinations.append(destination)
-
-        successful_workers = sum(
-            1
-            for destination in final_destinations
-            if destination["research_success"]
-        )
-
-        research_success = (
-            successful_workers == 3
-        )
-
-        overall_success = (
-            len(final_destinations) == 3
-        )
-
-        result = {
-            "success": overall_success,
-
-            "candidates": final_destinations,
-
-            # Same objects under travel_options for existing code.
-            "travel_options": final_destinations,
-
-            "research": research_result,
-
-            "research_success": research_success,
-
-            "successful_workers": successful_workers,
-
-            "worker_count": 3,
-        }
-
-        return result
-
-    # ============================================================
-    # SELECTED TRIP
-    # ============================================================
-
-    def build_selected_trip(
-        self,
-        selected_destination,
-        trip_requirements=None,
-        trip_information=None,
-    ):
-        """
-        Build the selected destination response.
-
-        This does not perform another research cycle.
-        """
-
-        trip_requirements = trip_requirements or {}
-        trip_information = trip_information or {}
-
-        if isinstance(selected_destination, dict):
-
-            selected = dict(selected_destination)
-
-        else:
-
-            selected = {
-                "name": str(selected_destination),
-                "country": "",
-                "description": "",
-                "reason": "",
-                "research": {},
-            }
-
-        # Canonical name.
-        if not selected.get("name"):
-            selected["name"] = selected.get(
-                "destination",
-                ""
-            )
-
-        # Compatibility alias.
-        selected["destination"] = selected["name"]
-
-        selected["trip_information"] = trip_information
-        selected["trip_requirements"] = trip_requirements
-
-        return selected
-
-    # ============================================================
-    # UTILITIES
-    # ============================================================
-
-    @staticmethod
-    def _extract_response_text(response):
 
         if response is None:
-            raise ValueError(
-                "Gemini returned no response."
-            )
+            return []
 
-        # New Google GenAI response.
-        text = getattr(
+        if isinstance(
             response,
-            "text",
-            None,
-        )
+            list
+        ):
 
-        if text:
-            return text
+            return self._extract_urls_from_items(
+                response
+            )
 
-        # Older response style.
-        output_text = getattr(
+        if isinstance(
             response,
-            "output_text",
-            None,
+            dict
+        ):
+
+            photos = response.get(
+                "photos"
+            )
+
+            if isinstance(
+                photos,
+                list
+            ):
+
+                return self._extract_urls_from_items(
+                    photos
+                )
+
+            images = response.get(
+                "images"
+            )
+
+            if isinstance(
+                images,
+                list
+            ):
+
+                return self._extract_urls_from_items(
+                    images
+                )
+
+        return []
+
+    # =========================================================
+    # EXTRACT IMAGE URLS
+    # =========================================================
+
+    def _extract_urls_from_items(
+        self,
+        items: List[Any]
+    ) -> List[str]:
+        """
+        Extract usable URLs from Pexels photo objects.
+        """
+
+        urls = []
+
+        for item in items:
+
+            # -------------------------------------------------
+            # Direct URL
+            # -------------------------------------------------
+
+            if isinstance(
+                item,
+                str
+            ):
+
+                if item.startswith(
+                    "http"
+                ):
+
+                    urls.append(
+                        item
+                    )
+
+                continue
+
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
+
+            # -------------------------------------------------
+            # Pexels photo src
+            # -------------------------------------------------
+
+            src = item.get(
+                "src"
+            )
+
+            if isinstance(
+                src,
+                dict
+            ):
+
+                url = (
+                    src.get("large")
+                    or src.get("large2x")
+                    or src.get("original")
+                    or src.get("medium")
+                )
+
+                if (
+                    isinstance(
+                        url,
+                        str
+                    )
+                    and url.startswith("http")
+                ):
+
+                    urls.append(
+                        url
+                    )
+
+                    continue
+
+            # -------------------------------------------------
+            # Generic URL
+            # -------------------------------------------------
+
+            url = item.get(
+                "url"
+            )
+
+            if (
+                isinstance(
+                    url,
+                    str
+                )
+                and url.startswith("http")
+            ):
+
+                urls.append(
+                    url
+                )
+
+        # -----------------------------------------------------
+        # Remove duplicates
+        # -----------------------------------------------------
+
+        return list(
+            dict.fromkeys(
+                urls
+            )
         )
 
-        if output_text:
-            return output_text
+    # =========================================================
+    # MAPTILER
+    # =========================================================
 
-        # Last resort.
-        if isinstance(response, str):
-            return response
+    def _get_coordinates(
+        self,
+        destination: str,
+        country: str
+    ) -> Optional[Dict[str, float]]:
+        """
+        Get coordinates through MapService.
+        """
 
-        raise ValueError(
-            "Could not extract text from Gemini response."
+        query = (
+            f"{destination}, {country}"
         )
-
-    @staticmethod
-    def _parse_json(raw):
-
-        if not raw:
-            raise ValueError(
-                "Gemini returned an empty response."
-            )
-
-        raw = raw.strip()
-
-        # Remove markdown JSON fences.
-        if raw.startswith("```"):
-            raw = raw.replace(
-                "```json",
-                "",
-                1,
-            )
-
-            raw = raw.replace(
-                "```",
-                "",
-            )
-
-            raw = raw.strip()
 
         try:
-            return json.loads(raw)
 
-        except json.JSONDecodeError:
-
-            # Try to recover JSON object from surrounding text.
-            start = raw.find("{")
-            end = raw.rfind("}")
-
-            if start != -1 and end != -1 and end > start:
-
-                extracted = raw[
-                    start:end + 1
-                ]
-
-                return json.loads(extracted)
-
-            raise ValueError(
-                "Gemini returned invalid JSON."
+            response = self.map_service.geocode(
+                query
             )
+
+        except Exception as exc:
+
+            print(
+                f"MapTiler lookup failed for "
+                f"{destination}: {exc}"
+            )
+
+            return None
+
+        return self._extract_coordinates(
+            response
+        )
+
+    # =========================================================
+    # COORDINATE EXTRACTION
+    # =========================================================
+
+    def _extract_coordinates(
+        self,
+        response: Any
+    ) -> Optional[Dict[str, float]]:
+        """
+        Normalize common MapTiler/MapService responses.
+        """
+
+        if response is None:
+            return None
+
+        # -----------------------------------------------------
+        # Direct latitude/longitude
+        # -----------------------------------------------------
+
+        if isinstance(
+            response,
+            dict
+        ):
+
+            if (
+                "latitude" in response
+                and "longitude" in response
+            ):
+
+                try:
+
+                    return {
+                        "latitude": float(
+                            response["latitude"]
+                        ),
+                        "longitude": float(
+                            response["longitude"]
+                        )
+                    }
+
+                except (
+                    ValueError,
+                    TypeError
+                ):
+
+                    return None
+
+            # -------------------------------------------------
+            # lat/lon
+            # -------------------------------------------------
+
+            if (
+                "lat" in response
+                and "lon" in response
+            ):
+
+                try:
+
+                    return {
+                        "latitude": float(
+                            response["lat"]
+                        ),
+                        "longitude": float(
+                            response["lon"]
+                        )
+                    }
+
+                except (
+                    ValueError,
+                    TypeError
+                ):
+
+                    return None
+
+            # -------------------------------------------------
+            # GeoJSON geometry
+            # -------------------------------------------------
+
+            geometry = response.get(
+                "geometry"
+            )
+
+            coordinates = self._coordinates_from_geometry(
+                geometry
+            )
+
+            if coordinates:
+                return coordinates
+
+            # -------------------------------------------------
+            # MapTiler feature collection
+            # -------------------------------------------------
+
+            features = response.get(
+                "features"
+            )
+
+            if (
+                isinstance(
+                    features,
+                    list
+                )
+                and features
+            ):
+
+                first_feature = features[0]
+
+                if isinstance(
+                    first_feature,
+                    dict
+                ):
+
+                    coordinates = (
+                        self._coordinates_from_geometry(
+                            first_feature.get(
+                                "geometry"
+                            )
+                        )
+                    )
+
+                    if coordinates:
+                        return coordinates
+
+        # -----------------------------------------------------
+        # Raw coordinate list
+        #
+        # GeoJSON order:
+        # [longitude, latitude]
+        # -----------------------------------------------------
+
+        if isinstance(
+            response,
+            list
+        ):
+
+            if len(response) >= 2:
+
+                try:
+
+                    return {
+                        "latitude": float(
+                            response[1]
+                        ),
+                        "longitude": float(
+                            response[0]
+                        )
+                    }
+
+                except (
+                    ValueError,
+                    TypeError
+                ):
+
+                    return None
+
+        return None
+
+    # =========================================================
+    # GEOMETRY COORDINATES
+    # =========================================================
+
+    def _coordinates_from_geometry(
+        self,
+        geometry: Any
+    ) -> Optional[Dict[str, float]]:
+        """
+        Extract coordinates from a GeoJSON geometry object.
+        """
+
+        if not isinstance(
+            geometry,
+            dict
+        ):
+            return None
+
+        coordinates = geometry.get(
+            "coordinates"
+        )
+
+        if (
+            not isinstance(
+                coordinates,
+                list
+            )
+            or len(coordinates) < 2
+        ):
+
+            return None
+
+        try:
+
+            return {
+                "latitude": float(
+                    coordinates[1]
+                ),
+                "longitude": float(
+                    coordinates[0]
+                )
+            }
+
+        except (
+            ValueError,
+            TypeError
+        ):
+
+            return None
+
+    # =========================================================
+    # DESTINATION KEY
+    # =========================================================
+
+    def _destination_key(
+        self,
+        destination: str,
+        country: str
+    ) -> str:
+        """
+        Create a normalized destination identifier.
+        """
+
+        return (
+            f"{destination.strip().lower()}|"
+            f"{country.strip().lower()}"
+        )
+
+    # =========================================================
+    # SAVE JSON
+    # =========================================================
+
+    def save_json(
+        self,
+        result: Dict[str, Any],
+        file_path: str = "travel_results.json"
+    ) -> str:
+        """
+        Save TravelAgent's output as JSON.
+        """
+
+        with open(
+            file_path,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                result,
+                file,
+                indent=4,
+                ensure_ascii=False
+            )
+
+        return file_path

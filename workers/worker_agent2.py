@@ -5,7 +5,7 @@ import requests
 from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
-from tavily_service import TavilyService
+from services.tavily_service import TavilyService
 
 
 load_dotenv()

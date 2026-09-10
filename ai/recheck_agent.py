@@ -1,5 +1,5 @@
-import json
 import os
+import json
 import requests
 
 from typing import Dict, Any
@@ -7,41 +7,58 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 
 
+load_dotenv()
+
+
 class RecheckAgent:
     """
     Recheck Agent
 
-    LLM:
-        Ollama Gemma 4:26b
+    Model:
+        Ollama Gemma4:26b
 
     Responsibility:
-        1. Receive a completed worker result.
-        2. Check the research result for completeness,
-           consistency, and obvious errors.
-        3. Correct the result itself when necessary.
-        4. Return the corrected standardized result.
+        1. Receive ONE worker result.
+        2. Check the result for completeness and consistency.
+        3. Correct obvious problems when possible.
+        4. Return PASS or FAIL.
+        5. Return the corrected worker result when PASS.
 
     RecheckAgent does NOT:
         - perform web searches
         - use Tavily
-        - search for images
-        - search maps
-        - calculate the final budget
-        - access databases
+        - call workers
+        - retry workers
+        - select destinations
         - generate destinations
-        - communicate with other workers
+        - use Pexels
+        - use MapTiler
+        - calculate total budget
+        - communicate with TravelAgent
+
+    IMPORTANT:
+        If the result is FAIL, main.py is responsible for
+        calling the SAME worker again.
 
     Architecture:
 
-        Worker 1 ──┐
-        Worker 2 ──┼──> RecheckAgent
-        Worker 3 ──┘
-                       |
-                       v
-                Corrected Results
-                       |
-                       v
-                 Budget / Structure
+        Worker
+           |
+           v
+        RecheckAgent
+           |
+        +--+--+
+        |     |
+      PASS   FAIL
+        |     |
+        v     v
+     Structure  main.py
+                |
+                v
+              Worker
+                |
+                v
+             Recheck
     """
 
     OLLAMA_API_URL = os.getenv(
@@ -50,9 +67,6 @@ class RecheckAgent:
     )
 
     def __init__(self):
-
-        load_dotenv()
-
         # =====================================================
         # OLLAMA
         # =====================================================
@@ -80,88 +94,68 @@ class RecheckAgent:
         worker_result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Recheck and correct one completed worker result.
-
-        Args:
-            worker_result:
-                Standardized result returned by Worker 1,
-                Worker 2, or Worker 3.
+        Recheck ONE worker result.
 
         Returns:
-            Corrected standardized worker result.
+
+            {
+                "status": "PASS",
+                "result": {...},
+                "issues": []
+            }
+
+        OR:
+
+            {
+                "status": "FAIL",
+                "result": null,
+                "issues": [...]
+            }
+
+        RecheckAgent does not retry the worker.
         """
+
+        # -----------------------------------------------------
+        # Validate input
+        # -----------------------------------------------------
 
         self._validate_worker_result(
             worker_result
         )
 
-        result = self._recheck_with_ollama(
+        # -----------------------------------------------------
+        # Send result to Gemma4:26b
+        # -----------------------------------------------------
+
+        result = self._ask_ollama(
             worker_result
         )
 
-        return self._validate_rechecked_result(
+        # -----------------------------------------------------
+        # Validate Recheck response
+        # -----------------------------------------------------
+
+        return self._validate_recheck_response(
             result,
-            worker_result["destination"]
+            worker_result
         )
 
     # =========================================================
-    # VALIDATE WORKER RESULT
+    # OLLAMA
     # =========================================================
 
-    def _validate_worker_result(
-        self,
-        worker_result: Dict[str, Any]
-    ) -> None:
-        """
-        Validate that the worker produced the expected
-        standardized research structure.
-
-        This is structural validation only.
-        """
-
-        if not isinstance(
-            worker_result,
-            dict
-        ):
-            raise TypeError(
-                "worker_result must be a dictionary."
-            )
-
-        required_fields = [
-            "destination",
-            "country",
-            "major_attractions",
-            "traveling_cost",
-            "residence_cost",
-            "average_food_cost",
-            "daily_average_travel_cost",
-            "summary"
-        ]
-
-        for field in required_fields:
-
-            if field not in worker_result:
-
-                raise ValueError(
-                    f"Worker result is missing field: {field}"
-                )
-
-    # =========================================================
-    # OLLAMA RECHECK
-    # =========================================================
-
-    def _recheck_with_ollama(
+    def _ask_ollama(
         self,
         worker_result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Ask Gemma 4:26b to verify and correct the worker result.
+        Ask Gemma4:26b to inspect one worker result.
         """
 
         worker_json = json.dumps(
             worker_result,
             ensure_ascii=False,
-            separators=(",", ":"),
+            indent=2,
             default=str
         )
 
@@ -169,96 +163,104 @@ class RecheckAgent:
 You are the Recheck Agent in a multi-agent travel
 research system.
 
-Your ONLY job is to recheck ONE completed research
-result produced by a worker.
+Your ONLY job is to inspect ONE research result produced
+by a research worker.
 
-The worker result has already been researched.
+You are a verification and correction layer.
 
-You must inspect it for:
+You MUST:
 
-1. Missing information.
-2. Invalid or suspicious values.
-3. Incorrect data types.
-4. Inconsistent information.
-5. Incorrect destination or country.
-6. Invalid major attractions.
-7. Clearly unreasonable cost values.
-8. Incorrect interpretation of the required fields.
-9. Obvious contradictions between fields.
-
-If something is wrong, YOU must correct it.
-
-If something is already correct, preserve it.
-
-Do not unnecessarily change valid information.
-
-IMPORTANT:
-
-You are a correction and validation agent.
+1. Check that every required field exists.
+2. Check that the destination is consistent.
+3. Check that the country is consistent.
+4. Check that there are exactly 3 major attractions.
+5. Check that the attractions are valid strings.
+6. Check that cost fields are numeric or null.
+7. Check that cost values are not negative.
+8. Check that the summary is valid.
+9. Check for obvious contradictions or malformed values.
+10. Correct an obvious formatting/value problem when it can
+    be safely corrected from the supplied worker result.
+11. Use null when a cost cannot be considered reliable.
 
 You MUST NOT:
 
-- perform web searches
+- search the web
 - use Tavily
-- invent unsupported facts
-- generate a different destination
-- change the destination simply because another
-  destination might be better
-- add new fields
-- remove required fields
+- call any worker
+- retry the worker
+- select another destination
+- generate a destination
+- use Pexels
+- use MapTiler
 - calculate total_budget
-- return explanations
-- return reasoning
+- add unsupported facts
+- invent prices
+- invent attractions
 - return Markdown
-- return ```json
-- return anything except JSON
+- return explanations outside JSON
+- return reasoning
 
-If reliable information is unavailable for a cost field,
-use null rather than inventing a number.
+IMPORTANT:
 
-The final result MUST use EXACTLY this structure:
+If the result is acceptable after validation/correction,
+return status "PASS".
+
+If the result contains a problem that cannot safely be
+corrected from the supplied information, return status "FAIL".
+
+A FAIL does NOT mean you should retry anything.
+The external orchestrator will call the worker again.
+
+Use EXACTLY this structure:
 
 {
-    "destination": "string",
-    "country": "string",
-    "major_attractions": [
-        "string",
-        "string",
-        "string"
-    ],
-    "traveling_cost": number_or_null,
-    "residence_cost": number_or_null,
-    "average_food_cost": number_or_null,
-    "daily_average_travel_cost": number_or_null,
-    "summary": "string"
+    "status": "PASS",
+    "result": {
+        "destination": "string",
+        "country": "string",
+        "major_attractions": [
+            "string",
+            "string",
+            "string"
+        ],
+        "traveling_cost": number_or_null,
+        "residence_cost": number_or_null,
+        "average_food_cost": number_or_null,
+        "daily_average_travel_cost": number_or_null,
+        "summary": "string"
+    },
+    "issues": []
+}
+
+For FAIL:
+
+{
+    "status": "FAIL",
+    "result": null,
+    "issues": [
+        "description of problem"
+    ]
 }
 
 Rules:
 
-- major_attractions MUST contain exactly 3 items.
-- All monetary values must be numbers or null.
-- Do not include currency symbols inside numbers.
-- average_food_cost means average food cost PER DAY.
-- daily_average_travel_cost means local transportation
-  cost PER DAY.
-- residence_cost means total accommodation cost for
-  the requested trip.
-- traveling_cost means the one-time cost of reaching
-  the destination.
+- status must be exactly PASS or FAIL.
+- PASS must contain a complete result.
+- FAIL must contain result as null.
+- issues must always be a list.
 - Do not include total_budget.
-
-Return ONLY the corrected JSON object.
 """
 
         user_prompt = f"""
-WORKER RESEARCH RESULT
-======================
+WORKER RESULT
+=============
 
 {worker_json}
 
-Recheck this result and correct it where necessary.
+Inspect this result according to your rules.
 
-Return ONLY the corrected JSON object.
+Return ONLY the required JSON object.
 """
 
         headers = {
@@ -270,6 +272,7 @@ Return ONLY the corrected JSON object.
 
         payload = {
             "model": self.ollama_model,
+
             "messages": [
                 {
                     "role": "system",
@@ -280,10 +283,13 @@ Return ONLY the corrected JSON object.
                     "content": user_prompt
                 }
             ],
+
             "format": "json",
+
             "stream": False,
+
             "options": {
-                "temperature": 0.1
+                "temperature": 0.0
             }
         }
 
@@ -307,16 +313,350 @@ Return ONLY the corrected JSON object.
         except (
             KeyError,
             TypeError
-        ):
+        ) as exc:
 
             raise RuntimeError(
                 "Unexpected Ollama response from "
                 "RecheckAgent."
-            )
+            ) from exc
 
         return self._extract_json(
             content
         )
+
+    # =========================================================
+    # WORKER RESULT VALIDATION
+    # =========================================================
+
+    def _validate_worker_result(
+        self,
+        worker_result: Dict[str, Any]
+    ) -> None:
+        """
+        Validate the basic worker schema before sending it
+        to Gemma.
+        """
+
+        if not isinstance(
+            worker_result,
+            dict
+        ):
+
+            raise TypeError(
+                "worker_result must be a dictionary."
+            )
+
+        required_fields = [
+            "destination",
+            "country",
+            "major_attractions",
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost",
+            "summary"
+        ]
+
+        for field in required_fields:
+
+            if field not in worker_result:
+
+                raise ValueError(
+                    f"Worker result is missing field: {field}"
+                )
+
+        if not isinstance(
+            worker_result["destination"],
+            str
+        ):
+
+            raise TypeError(
+                "Worker destination must be a string."
+            )
+
+        if not isinstance(
+            worker_result["country"],
+            str
+        ):
+
+            raise TypeError(
+                "Worker country must be a string."
+            )
+
+    # =========================================================
+    # RECHECK RESPONSE VALIDATION
+    # =========================================================
+
+    def _validate_recheck_response(
+        self,
+        response: Dict[str, Any],
+        original_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Validate and normalize Gemma's PASS/FAIL response.
+        """
+
+        if not isinstance(
+            response,
+            dict
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent expected a JSON object."
+            )
+
+        status = response.get(
+            "status"
+        )
+
+        if status not in (
+            "PASS",
+            "FAIL"
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent status must be PASS or FAIL."
+            )
+
+        issues = response.get(
+            "issues",
+            []
+        )
+
+        if not isinstance(
+            issues,
+            list
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent issues must be a list."
+            )
+
+        # -----------------------------------------------------
+        # FAIL
+        # -----------------------------------------------------
+
+        if status == "FAIL":
+
+            return {
+                "status": "FAIL",
+                "result": None,
+                "issues": [
+                    str(issue)
+                    for issue in issues
+                ]
+            }
+
+        # -----------------------------------------------------
+        # PASS
+        # -----------------------------------------------------
+
+        corrected_result = response.get(
+            "result"
+        )
+
+        if not isinstance(
+            corrected_result,
+            dict
+        ):
+
+            raise RuntimeError(
+                "PASS response must contain a result object."
+            )
+
+        self._validate_passed_result(
+            corrected_result,
+            original_result
+        )
+
+        # Never allow total_budget through.
+        corrected_result.pop(
+            "total_budget",
+            None
+        )
+
+        return {
+            "status": "PASS",
+            "result": corrected_result,
+            "issues": [
+                str(issue)
+                for issue in issues
+            ]
+        }
+
+    # =========================================================
+    # PASSED RESULT VALIDATION
+    # =========================================================
+
+    def _validate_passed_result(
+        self,
+        result: Dict[str, Any],
+        original_result: Dict[str, Any]
+    ) -> None:
+        """
+        Ensure the corrected result still belongs to the
+        same destination and follows the worker schema.
+        """
+
+        required_fields = [
+            "destination",
+            "country",
+            "major_attractions",
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost",
+            "summary"
+        ]
+
+        for field in required_fields:
+
+            if field not in result:
+
+                raise RuntimeError(
+                    f"RecheckAgent PASS result is missing "
+                    f"field: {field}"
+                )
+
+        # -----------------------------------------------------
+        # Destination cannot change
+        # -----------------------------------------------------
+
+        original_destination = (
+            original_result["destination"]
+            .strip()
+            .lower()
+        )
+
+        returned_destination = (
+            str(result["destination"])
+            .strip()
+            .lower()
+        )
+
+        if (
+            original_destination
+            != returned_destination
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent cannot change the destination."
+            )
+
+        # -----------------------------------------------------
+        # Country cannot change
+        # -----------------------------------------------------
+
+        original_country = (
+            original_result["country"]
+            .strip()
+            .lower()
+        )
+
+        returned_country = (
+            str(result["country"])
+            .strip()
+            .lower()
+        )
+
+        if (
+            original_country
+            != returned_country
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent cannot change the country."
+            )
+
+        # -----------------------------------------------------
+        # Attractions
+        # -----------------------------------------------------
+
+        attractions = result[
+            "major_attractions"
+        ]
+
+        if not isinstance(
+            attractions,
+            list
+        ):
+
+            raise RuntimeError(
+                "RecheckAgent result attractions "
+                "must be a list."
+            )
+
+        if len(attractions) != 3:
+
+            raise RuntimeError(
+                "RecheckAgent result must contain "
+                "exactly 3 attractions."
+            )
+
+        for attraction in attractions:
+
+            if not isinstance(
+                attraction,
+                str
+            ):
+
+                raise RuntimeError(
+                    "Every attraction must be a string."
+                )
+
+        # -----------------------------------------------------
+        # Numeric fields
+        # -----------------------------------------------------
+
+        numeric_fields = [
+            "traveling_cost",
+            "residence_cost",
+            "average_food_cost",
+            "daily_average_travel_cost"
+        ]
+
+        for field in numeric_fields:
+
+            value = result[field]
+
+            if value is None:
+                continue
+
+            try:
+
+                numeric_value = float(
+                    value
+                )
+
+            except (
+                ValueError,
+                TypeError
+            ) as exc:
+
+                raise RuntimeError(
+                    f"Invalid numeric value for {field}."
+                ) from exc
+
+            if numeric_value < 0:
+
+                raise RuntimeError(
+                    f"{field} cannot be negative."
+                )
+
+            result[field] = numeric_value
+
+        # -----------------------------------------------------
+        # Summary
+        # -----------------------------------------------------
+
+        if not isinstance(
+            result["summary"],
+            str
+        ):
+
+            raise RuntimeError(
+                "summary must be a string."
+            )
 
     # =========================================================
     # JSON EXTRACTION
@@ -327,20 +667,28 @@ Return ONLY the corrected JSON object.
         content: str
     ) -> Dict[str, Any]:
         """
-        Parse JSON returned by Ollama.
+        Extract JSON from Gemma's response.
         """
 
-        if not content:
+        if not isinstance(
+            content,
+            str
+        ):
 
             raise RuntimeError(
-                "RecheckAgent received an empty "
-                "Ollama response."
+                "RecheckAgent received a non-string response."
             )
 
         content = content.strip()
 
+        if not content:
+
+            raise RuntimeError(
+                "RecheckAgent received an empty response."
+            )
+
         # -----------------------------------------------------
-        # Remove Markdown fences if necessary
+        # Remove Markdown fences
         # -----------------------------------------------------
 
         if content.startswith("```"):
@@ -375,17 +723,21 @@ Return ONLY the corrected JSON object.
             start = content.find("{")
             end = content.rfind("}")
 
-            if start == -1 or end == -1:
+            if (
+                start == -1
+                or end == -1
+            ):
 
                 raise RuntimeError(
-                    "RecheckAgent could not parse "
-                    "Ollama JSON."
+                    "RecheckAgent could not parse JSON."
                 )
 
             try:
 
                 result = json.loads(
-                    content[start:end + 1]
+                    content[
+                        start:end + 1
+                    ]
                 )
 
             except json.JSONDecodeError as exc:
@@ -402,112 +754,5 @@ Return ONLY the corrected JSON object.
             raise RuntimeError(
                 "RecheckAgent expected a JSON object."
             )
-
-        return result
-
-    # =========================================================
-    # FINAL VALIDATION
-    # =========================================================
-
-    def _validate_rechecked_result(
-        self,
-        result: Dict[str, Any],
-        original_destination: str
-    ) -> Dict[str, Any]:
-        """
-        Validate the corrected result before returning it.
-        """
-
-        required_fields = [
-            "destination",
-            "country",
-            "major_attractions",
-            "traveling_cost",
-            "residence_cost",
-            "average_food_cost",
-            "daily_average_travel_cost",
-            "summary"
-        ]
-
-        for field in required_fields:
-
-            if field not in result:
-
-                raise RuntimeError(
-                    f"RecheckAgent removed required "
-                    f"field: {field}"
-                )
-
-        # -----------------------------------------------------
-        # Destination must not change
-        # -----------------------------------------------------
-
-        result["destination"] = (
-            original_destination
-        )
-
-        # -----------------------------------------------------
-        # Attractions
-        # -----------------------------------------------------
-
-        attractions = result[
-            "major_attractions"
-        ]
-
-        if not isinstance(
-            attractions,
-            list
-        ):
-
-            raise RuntimeError(
-                "major_attractions must be a list."
-            )
-
-        if len(attractions) != 3:
-
-            raise RuntimeError(
-                "RecheckAgent must return exactly "
-                "3 attractions."
-            )
-
-        # -----------------------------------------------------
-        # Numeric fields
-        # -----------------------------------------------------
-
-        numeric_fields = [
-            "traveling_cost",
-            "residence_cost",
-            "average_food_cost",
-            "daily_average_travel_cost"
-        ]
-
-        for field in numeric_fields:
-
-            value = result[field]
-
-            if value is None:
-                continue
-
-            try:
-
-                result[field] = float(
-                    value
-                )
-
-            except (
-                ValueError,
-                TypeError
-            ):
-
-                result[field] = None
-
-        # -----------------------------------------------------
-        # Ensure no total_budget is returned
-        # -----------------------------------------------------
-
-        result.pop(
-            "total_budget",
-            None
-        )
 
         return result
