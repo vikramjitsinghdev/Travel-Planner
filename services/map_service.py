@@ -1,185 +1,46 @@
+"""MapTiler geocoding and static-map service."""
 import os
 import requests
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 
 class MapService:
-    """
-    Centralized MapTiler service.
-
-    The Travel Agent uses this class whenever it needs
-    map/location information for a destination.
-
-    The MapTiler API key is loaded from:
-
-        MAPTILER_API_KEY
-
-    The Travel Agent should NEVER access the API key directly.
-    """
-
     BASE_URL = "https://api.maptiler.com"
 
     def __init__(self):
         load_dotenv()
-
-        api_key = os.getenv("MAPTILER_API_KEY")
-
-        if not api_key:
-            raise ValueError(
-                "MAPTILER_API_KEY was not found in the environment variables."
-            )
-
-        self.api_key = api_key
-
-    # =========================================================
-    # GEOCODING
-    # =========================================================
+        self.api_key = os.getenv("MAPTILER_API_KEY")
 
     def geocode(self, location):
-        """
-        Convert a destination name into geographic coordinates.
-
-        Args:
-            location (str):
-                Destination name, city, or place.
-
-        Returns:
-            dict:
-                {
-                    "name": "...",
-                    "latitude": ...,
-                    "longitude": ...
-                }
-        """
-
-        if not location or not location.strip():
-            raise ValueError(
-                "Location cannot be empty."
-            )
-
-        url = f"{self.BASE_URL}/geocoding/{location.strip()}.json"
-
-        params = {
-            "key": self.api_key,
-            "limit": 1
-        }
-
-        response = requests.get(
-            url,
-            params=params,
-            timeout=10
-        )
-
+        if not self.api_key or not location or not location.strip():
+            return None
+        url = f"{self.BASE_URL}/geocoding/{quote(location.strip(), safe=',')}.json"
+        response = requests.get(url, params={"key": self.api_key, "limit": 1}, timeout=15)
         response.raise_for_status()
-
-        data = response.json()
-
-        features = data.get("features", [])
-
+        features = response.json().get("features", [])
         if not features:
             return None
-
         feature = features[0]
-
-        coordinates = feature.get("center")
-
-        if not coordinates or len(coordinates) < 2:
+        center = feature.get("center") or []
+        if len(center) < 2:
             return None
+        return {"name": feature.get("place_name", location), "longitude": center[0], "latitude": center[1]}
 
-        return {
-            "name": feature.get("place_name", location.strip()),
-            "longitude": coordinates[0],
-            "latitude": coordinates[1]
-        }
-
-    # =========================================================
-    # STATIC MAP
-    # =========================================================
-
-    def get_static_map(
-        self,
-        longitude,
-        latitude,
-        zoom=10,
-        width=800,
-        height=500
-    ):
-        """
-        Generate a MapTiler static map URL.
-
-        Args:
-            longitude (float):
-                Longitude of the destination.
-
-            latitude (float):
-                Latitude of the destination.
-
-            zoom (int):
-                Map zoom level.
-
-            width (int):
-                Image width.
-
-            height (int):
-                Image height.
-
-        Returns:
-            str:
-                Static map URL.
-        """
-
+    def get_static_map(self, longitude, latitude, zoom=10, width=900, height=560):
+        if not self.api_key:
+            return None
         return (
-            f"{self.BASE_URL}/maps/streets-v2/"
-            f"static/"
-            f"{longitude},{latitude},{zoom}/"
-            f"{width}x{height}.png"
-            f"?key={self.api_key}"
+            f"{self.BASE_URL}/maps/streets-v2/static/"
+            f"{longitude},{latitude},{zoom}/{width}x{height}.png?key={self.api_key}"
         )
 
-    # =========================================================
-    # DESTINATION MAP
-    # =========================================================
-
-    def get_destination_map(
-        self,
-        destination,
-        zoom=10,
-        width=800,
-        height=500
-    ):
-        """
-        Geocode a destination and generate its static map.
-
-        Args:
-            destination (str):
-                Destination name.
-
-        Returns:
-            dict or None:
-                {
-                    "name": "...",
-                    "latitude": ...,
-                    "longitude": ...,
-                    "map_url": "..."
-                }
-        """
-
-        location = self.geocode(destination)
-
+    def get_destination_map(self, destination, country=None):
+        label = ", ".join(part for part in [destination, country] if part)
+        location = self.geocode(label)
         if not location:
             return None
-
-        map_url = self.get_static_map(
-            longitude=location["longitude"],
-            latitude=location["latitude"],
-            zoom=zoom,
-            width=width,
-            height=height
-        )
-
         return {
-            "name": location["name"],
-            "latitude": location["latitude"],
-            "longitude": location["longitude"],
-            "map_url": map_url
+            **location,
+            "map_url": self.get_static_map(location["longitude"], location["latitude"]),
         }
