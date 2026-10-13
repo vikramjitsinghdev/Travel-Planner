@@ -37,3 +37,38 @@ class PexelsService:
             for photo in photos
             if (photo.get("src") or {}).get("large")
         ]
+    def search_attraction(self, attraction, destination, country=None, per_page=1):
+        """Find a photograph for a specific attraction, not just the destination."""
+        if not self.api_key:
+            return []
+        attraction = str(attraction or "").strip()
+        if not attraction:
+            return []
+        query = ", ".join(part for part in [attraction, destination, country] if part)
+        response = requests.get(
+            f"{self.BASE_URL}/search",
+            headers={"Authorization": self.api_key},
+            params={
+                "query": query,
+                "per_page": max(1, min(int(per_page), 5)),
+                "orientation": "landscape",
+            },
+            timeout=12,
+        )
+        response.raise_for_status()
+        photos = response.json().get("photos", [])
+        return [
+            {
+                "id": photo.get("id"),
+                "photographer": photo.get("photographer"),
+                "alt": photo.get("alt"),
+                "url": photo.get("url"),
+                "image_url": (photo.get("src") or {}).get("large"),
+                "large_url": (photo.get("src") or {}).get("large"),
+                "medium_url": (photo.get("src") or {}).get("medium"),
+                "photographer_url": photo.get("photographer_url"),
+            }
+            for photo in photos
+            if (photo.get("src") or {}).get("large")
+        ]
+

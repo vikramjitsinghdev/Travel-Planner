@@ -56,6 +56,39 @@ class TravelPlanner:
             enriched = self.travel_agent.enrich_destination(
                 candidate["destination"], candidate["country"], basic
             )
+
+            # ResearchAgent supplies attraction names/descriptions, but not image URLs.
+            # Search Pexels for each attraction so the frontend can render real photos
+            # instead of showing the generic placeholder for every attraction card.
+            attractions = deep.get("major_attractions", [])
+            if not isinstance(attractions, list):
+                attractions = []
+            enriched_attractions = []
+            for attraction in attractions:
+                if not isinstance(attraction, dict):
+                    continue
+                item = dict(attraction)
+                existing_image = (
+                    item.get("image_url") or item.get("imageUrl") or
+                    item.get("photo_url") or item.get("thumbnail_url")
+                )
+                if not existing_image:
+                    attraction_name = str(item.get("name") or item.get("attraction") or "").strip()
+                    if attraction_name:
+                        try:
+                            photos = self.travel_agent.pexels.search_attraction(
+                                attraction_name, candidate["destination"], candidate["country"], per_page=1
+                            )
+                            if photos:
+                                item["image_url"] = photos[0].get("image_url")
+                                item["image_urls"] = [photo.get("image_url") for photo in photos if photo.get("image_url")]
+                                item["image_source"] = "Pexels"
+                                item["image_alt"] = photos[0].get("alt") or attraction_name
+                        except Exception as exc:
+                            # Keep the trip usable if the image provider fails.
+                            print(f"Attraction image lookup failed for {attraction_name}: {exc}")
+                enriched_attractions.append(item)
+
             final_destinations.append({
                 "destination": candidate["destination"],
                 "name": candidate["destination"],
@@ -69,7 +102,7 @@ class TravelPlanner:
                 "map_url": enriched.get("map_url"),
                 "research": deep,
                 "research_result": deep,
-                "major_attractions": deep.get("major_attractions", []),
+                "major_attractions": enriched_attractions,
                 "cost_estimates": deep.get("cost_estimates", {}),
                 "best_time_to_visit": deep.get("best_time_to_visit", ""),
                 "local_transport": deep.get("local_transport", ""),
