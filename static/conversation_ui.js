@@ -824,6 +824,131 @@
     }
 
 
+
+    /* ========================================================
+       SMART BUDGET ESTIMATES
+       ======================================================== */
+
+    function costAmount(entry) {
+        if (entry === null || entry === undefined) return null;
+        const raw = (typeof entry === "object")
+            ? (entry.amount ?? entry.value ?? entry.estimated_cost)
+            : entry;
+        if (raw === null || raw === undefined || raw === "") return null;
+        const amount = (typeof raw === "number")
+            ? raw
+            : Number(String(raw).replace(/[^0-9.\-]/g, ""));
+        return Number.isFinite(amount) && amount >= 0 ? amount : null;
+    }
+
+    function budgetEstimateData(candidate) {
+        const costs = candidate?.cost_estimates
+            ?? candidate?.research?.cost_estimates
+            ?? candidate?.research_result?.cost_estimates
+            ?? {};
+        const travelers = Math.max(1, Number(basicTripData?.travelers) || 1);
+        const days = Math.max(1, Number(basicTripData?.duration_days) || 1);
+        const budget = Number(basicTripData?.budget);
+        const entries = [
+            ["Travel to destination", costs.travel_to_destination, "travel"],
+            ["Accommodation", costs.accommodation_per_night, "night"],
+            ["Food", costs.food_per_day, "food"],
+            ["Local transport", costs.local_transport_per_day, "local"]
+        ].map(([label, entry, kind]) => {
+            const amount = costAmount(entry);
+            const basis = typeof entry === "object" ? text(entry.basis, "") : "";
+            const currency = typeof entry === "object" ? text(entry.currency, "CAD") : "CAD";
+            let groupEstimate = null;
+            const basisLower = basis.toLowerCase();
+            if (amount !== null) {
+                if (kind === "travel" && /per person|per traveler|per traveller|each person|round.?trip per person/.test(basisLower)) {
+                    groupEstimate = amount * travelers;
+                } else if (kind === "night" && /per night|per room|nightly/.test(basisLower)) {
+                    groupEstimate = amount * days;
+                } else if ((kind === "food" || kind === "local") && /per person|per traveler|per traveller|per day per person|daily per person/.test(basisLower)) {
+                    groupEstimate = amount * travelers * days;
+                } else if (kind === "food" && /per day|daily/.test(basisLower)) {
+                    groupEstimate = amount * days;
+                } else if (kind === "local" && /per day|daily/.test(basisLower)) {
+                    groupEstimate = amount * days;
+                }
+            }
+            return { label, amount, basis, currency, groupEstimate };
+        });
+        const explicitTotal = costAmount(costs.total ?? costs.estimated_total ?? candidate?.estimated_cost ?? candidate?.research_estimate);
+        const usable = entries.filter(item => item.amount !== null);
+        const calculable = entries.filter(item => item.groupEstimate !== null);
+        const estimatedTotal = explicitTotal !== null
+            ? explicitTotal
+            : (calculable.length ? calculable.reduce((sum, item) => sum + item.groupEstimate, 0) : null);
+        const complete = explicitTotal !== null || (calculable.length === entries.length);
+        const hasBudget = Number.isFinite(budget) && budget > 0;
+        const difference = hasBudget && estimatedTotal !== null ? budget - estimatedTotal : null;
+        return {
+            entries, usable, estimatedTotal, complete, hasBudget, budget,
+            travelers, days, difference,
+            perPerson: estimatedTotal !== null ? estimatedTotal / travelers : null
+        };
+    }
+
+    function renderBudgetEstimate(candidate) {
+        const data = budgetEstimateData(candidate);
+        const currency = text(basicTripData?.currency, "CAD").toUpperCase();
+        const formatMoney = (amount, code = currency) => {
+            if (amount === null || amount === undefined || !Number.isFinite(Number(amount))) return "Not available";
+            try {
+                return new Intl.NumberFormat(undefined, {
+                    style: "currency", currency: /^[A-Z]{3}$/.test(code) ? code : "CAD",
+                    maximumFractionDigits: 0
+                }).format(Number(amount));
+            } catch (_) {
+                return `${Math.round(Number(amount))} ${currency}`;
+            }
+        };
+        const rows = data.entries.map(item => {
+            const amountLabel = item.amount === null
+                ? "Price not verified"
+                : `${formatMoney(item.amount, item.currency)}${item.basis ? ` <small>· ${safeEscape(item.basis)}</small>` : ""}`;
+            return `<div class="wl-smart-budget-row"><span>${safeEscape(item.label)}</span><strong>${amountLabel}</strong></div>`;
+        }).join("");
+        let status = `<div class="wl-smart-budget-status neutral">Not enough verified pricing data to judge the full trip cost yet.</div>`;
+        if (data.estimatedTotal !== null && data.hasBudget) {
+            if (data.difference >= 0) {
+                status = `<div class="wl-smart-budget-status good"><strong>${formatMoney(data.difference)} under budget</strong><span>${data.complete ? "Estimated total" : "Known-cost subtotal"}: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
+            } else {
+                status = `<div class="wl-smart-budget-status over"><strong>${formatMoney(Math.abs(data.difference))} over budget</strong><span>${data.complete ? "Estimated total" : "Known-cost subtotal"}: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
+            }
+            if (!data.complete) {
+                status += `<p class="wl-smart-budget-note">This is a partial estimate. Some categories are missing or do not specify whether prices are per person, per day, or per room. Do not treat it as a confirmed trip price.</p>`;
+            }
+        } else if (data.estimatedTotal !== null) {
+            status = `<div class="wl-smart-budget-status neutral"><strong>Estimated ${formatMoney(data.estimatedTotal)}</strong><span>${formatMoney(data.perPerson)} per person · ${data.complete ? "based on available research" : "partial estimate"}</span></div>`;
+        }
+        const missing = data.entries.filter(item => item.amount === null).map(item => item.label.toLowerCase());
+        const tips = [];
+        if (data.difference !== null && data.difference < 0) {
+            tips.push("Compare accommodation options and flexible travel dates first; these often have the largest effect on total cost.");
+            tips.push("Keep must-do attractions and reduce optional paid activities before removing experiences that matter to you.");
+        } else if (data.difference !== null && data.difference >= 0) {
+            tips.push("Keep part of the remaining budget as a buffer for price changes, meals, and unexpected costs.");
+        }
+        if (missing.length) tips.push(`Verify ${missing.join(", ")} before relying on this estimate.`);
+        return `
+            <section class="wl-smart-budget" aria-label="Smart trip budget">
+                <div class="wl-smart-budget-heading"><div><span class="wl-eyebrow">SMART BUDGET</span><h3>Can this trip fit your budget?</h3></div><span class="wl-budget-pill">${safeEscape(currency)}</span></div>
+                <div class="wl-smart-budget-summary">
+                    <div><small>YOUR TOTAL BUDGET</small><strong>${data.hasBudget ? formatMoney(data.budget) : "Not set"}</strong></div>
+                    <div><small>TRAVELLERS</small><strong>${data.travelers}</strong></div>
+                    <div><small>DURATION</small><strong>${data.days} days</strong></div>
+                </div>
+                <div class="wl-smart-budget-rows">${rows || `<p class="wl-smart-budget-note">No itemized cost estimates were returned by research yet.</p>`}</div>
+                ${status}
+                ${tips.length ? `<div class="wl-smart-budget-tips"><strong>Smart recommendations</strong><ul>${tips.map(tip => `<li>${safeEscape(tip)}</li>`).join("")}</ul></div>` : ""}
+                <p class="wl-smart-budget-disclaimer">Research estimates are indicative, not live quotes. Confirm prices with providers before booking.</p>
+            </section>
+        `;
+    }
+
     /* ========================================================
        GET CANDIDATES
        ======================================================== */
@@ -1621,6 +1746,8 @@
                     <div class="wl-fact-card"><span class="wl-fact-icon" aria-hidden="true">⌖</span><div><small>MAP</small><strong>${coordinate ? "Available" : "Not available"}</strong></div></div>
                 </div>
 
+                ${renderBudgetEstimate(candidate)}
+
                 ${attractionCards ? `
                     <section class="wl-attractions-section">
                         <div class="wl-section-heading"><div><span class="wl-section-icon" aria-hidden="true">✧</span><h3>Top attractions</h3></div><span class="wl-section-caption">Worth exploring</span></div>
@@ -2276,7 +2403,41 @@
             .wl-thinking-dot { animation: none; }
             .wl-option-card, .wl-primary-button, .wl-secondary-button { transition: none; }
         }
-    `;
+    
+        .wl-smart-budget { margin-top: 16px; padding: 16px; border: 1px solid #e2eaf4; border-radius: 16px; background: #f8fbff; color: #10294a; }
+        .wl-smart-budget-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+        .wl-smart-budget-heading h3 { margin:4px 0 0; font-size:17px; line-height:1.3; }
+        .wl-budget-pill { padding:5px 9px; border-radius:999px; background:#eaf1fc; color:#285b9b; font-size:11px; font-weight:800; }
+        .wl-smart-budget-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+        .wl-smart-budget-summary > div { min-width:0; padding:10px; border:1px solid #e5edf7; border-radius:10px; background:#fff; }
+        .wl-smart-budget-summary small { display:block; color:#718198; font-size:9px; font-weight:800; letter-spacing:.045em; }
+        .wl-smart-budget-summary strong { display:block; margin-top:5px; color:#10294a; font-size:15px; overflow-wrap:anywhere; }
+        .wl-smart-budget-rows { display:grid; gap:0; border:1px solid #e5edf7; border-radius:11px; background:#fff; overflow:hidden; }
+        .wl-smart-budget-row { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:10px 12px; border-bottom:1px solid #edf2f8; font-size:12px; }
+        .wl-smart-budget-row:last-child { border-bottom:0; }
+        .wl-smart-budget-row > span { color:#5d6f86; }
+        .wl-smart-budget-row > strong { max-width:65%; color:#10294a; text-align:right; font-size:12px; }
+        .wl-smart-budget-row small { display:block; margin-top:3px; color:#8492a5; font-size:10px; font-weight:500; }
+        .wl-smart-budget-status { display:grid; gap:4px; margin-top:10px; padding:11px 12px; border-radius:10px; font-size:12px; }
+        .wl-smart-budget-status > strong { font-size:14px; }
+        .wl-smart-budget-status > span { line-height:1.45; }
+        .wl-smart-budget-status.good { background:#ecfdf5; color:#047857; }
+        .wl-smart-budget-status.over { background:#fff1f2; color:#be123c; }
+        .wl-smart-budget-status.neutral { background:#eef4fb; color:#52647c; }
+        .wl-smart-budget-note { margin:8px 0 0; color:#64748b; font-size:11px; line-height:1.5; }
+        .wl-smart-budget-tips { margin-top:11px; font-size:12px; color:#40546d; }
+        .wl-smart-budget-tips > strong { color:#10294a; }
+        .wl-smart-budget-tips ul { margin:6px 0 0; padding-left:18px; }
+        .wl-smart-budget-tips li { margin:4px 0; line-height:1.45; }
+        .wl-smart-budget-disclaimer { margin:10px 0 0; color:#8794a7; font-size:10px; line-height:1.45; }
+        @media (max-width: 600px) {
+            .wl-smart-budget { padding:12px; }
+            .wl-smart-budget-summary { gap:6px; }
+            .wl-smart-budget-summary > div { padding:8px; }
+            .wl-smart-budget-summary strong { font-size:13px; }
+            .wl-smart-budget-row { gap:8px; }
+        }
+`;
 
 
     document.head.appendChild(
