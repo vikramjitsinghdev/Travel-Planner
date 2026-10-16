@@ -1400,6 +1400,42 @@
         }
 
 
+        /* Keep Plan Trip as one continuous workspace after submission. */
+        #page-planner.planner-chat-active .wizard {
+
+            display: none;
+        }
+
+
+        #page-planner.planner-chat-active .trip-chat-scene {
+
+            max-width: 100%;
+            margin: 0;
+            border-radius: 20px 20px 0 0;
+            box-shadow: var(--shadow);
+        }
+
+
+        #page-planner.planner-chat-active #resultsSection {
+
+            margin-top: 0 !important;
+            padding: 24px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-top: 0;
+            border-radius: 0 0 20px 20px;
+            box-shadow: var(--shadow);
+        }
+
+
+        @media (max-width: 700px) {
+
+            #page-planner.planner-chat-active #resultsSection {
+                padding: 14px;
+            }
+        }
+
+
         .trip-chat-status {
 
             height:

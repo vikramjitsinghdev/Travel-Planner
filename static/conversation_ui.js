@@ -846,8 +846,33 @@
             ?? candidate?.research?.cost_estimates
             ?? candidate?.research_result?.cost_estimates
             ?? {};
+        // Older research responses use these legacy fields. Preserve their values
+        // for display, but don't multiply them unless their unit is known.
+        const firstDefined = (...values) => values.find(value =>
+            value !== undefined && value !== null && value !== ""
+        );
+        const normalizedCosts = {
+            ...costs,
+            travel_to_destination: firstDefined(
+                costs.travel_to_destination, candidate?.traveling_cost,
+                candidate?.travel_cost, candidate?.transportation_cost
+            ),
+            accommodation_per_night: firstDefined(
+                costs.accommodation_per_night, candidate?.residence_cost,
+                candidate?.accommodation_cost
+            ),
+            food_per_day: firstDefined(
+                costs.food_per_day, candidate?.average_food_cost,
+                candidate?.food_cost
+            ),
+            local_transport_per_day: firstDefined(
+                costs.local_transport_per_day, candidate?.daily_average_travel_cost,
+                candidate?.local_transport_cost
+            )
+        };
         const travelers = Math.max(1, Number(basicTripData?.travelers) || 1);
         const days = Math.max(1, Number(basicTripData?.duration_days) || 1);
+        const nights = Math.max(0, Number(basicTripData?.duration_nights ?? basicTripData?.nights ?? (days - 1)));
         const budget = Number(basicTripData?.budget);
         const entries = [
             ["Travel to destination", costs.travel_to_destination, "travel"],
@@ -857,37 +882,50 @@
         ].map(([label, entry, kind]) => {
             const amount = costAmount(entry);
             const basis = typeof entry === "object" ? text(entry.basis, "") : "";
-            const currency = typeof entry === "object" ? text(entry.currency, "CAD") : "CAD";
-            let groupEstimate = null;
+            const currency = typeof entry === "object" ? text(entry.currency, "CAD").toUpperCase() : "CAD";
             const basisLower = basis.toLowerCase();
+            let groupEstimate = null;
             if (amount !== null) {
                 if (kind === "travel" && /per person|per traveler|per traveller|each person|round.?trip per person/.test(basisLower)) {
                     groupEstimate = amount * travelers;
+                } else if (kind === "travel" && /total for group|whole group|group total|total trip/.test(basisLower)) {
+                    groupEstimate = amount;
                 } else if (kind === "night" && /per night|per room|nightly/.test(basisLower)) {
-                    groupEstimate = amount * days;
+                    groupEstimate = amount * nights;
+                } else if (kind === "night" && /per person per night|per traveller per night|per traveler per night/.test(basisLower)) {
+                    groupEstimate = amount * travelers * nights;
                 } else if ((kind === "food" || kind === "local") && /per person|per traveler|per traveller|per day per person|daily per person/.test(basisLower)) {
                     groupEstimate = amount * travelers * days;
-                } else if (kind === "food" && /per day|daily/.test(basisLower)) {
+                } else if ((kind === "food" || kind === "local") && /per day|daily/.test(basisLower)) {
                     groupEstimate = amount * days;
-                } else if (kind === "local" && /per day|daily/.test(basisLower)) {
-                    groupEstimate = amount * days;
+                } else if (/total for group|whole group|group total|total trip/.test(basisLower)) {
+                    groupEstimate = amount;
                 }
             }
             return { label, amount, basis, currency, groupEstimate };
         });
-        const explicitTotal = costAmount(costs.total ?? costs.estimated_total ?? candidate?.estimated_cost ?? candidate?.research_estimate);
-        const usable = entries.filter(item => item.amount !== null);
+        const currencies = [...new Set(entries.filter(item => item.groupEstimate !== null).map(item => item.currency))];
+        const currencyConsistent = currencies.length <= 1;
         const calculable = entries.filter(item => item.groupEstimate !== null);
-        const estimatedTotal = explicitTotal !== null
-            ? explicitTotal
-            : (calculable.length ? calculable.reduce((sum, item) => sum + item.groupEstimate, 0) : null);
-        const complete = explicitTotal !== null || (calculable.length === entries.length);
+        const knownSubtotal = calculable.length
+            ? calculable.reduce((sum, item) => sum + item.groupEstimate, 0)
+            : null;
+        const complete = entries.every(item => item.groupEstimate !== null) && currencyConsistent;
+        const explicitTotalEntry = costs.total ?? costs.estimated_total;
+        const explicitTotal = costAmount(explicitTotalEntry);
+        const explicitTotalBasis = typeof explicitTotalEntry === "object" ? text(explicitTotalEntry.basis, "").toLowerCase() : "";
+        const explicitTotalIsTripWide = /full trip|whole trip|all categories|all expenses|group total|total for group/.test(explicitTotalBasis);
+        const estimatedTotal = complete
+            ? (explicitTotal !== null && explicitTotalIsTripWide ? explicitTotal : knownSubtotal)
+            : knownSubtotal;
         const hasBudget = Number.isFinite(budget) && budget > 0;
-        const difference = hasBudget && estimatedTotal !== null ? budget - estimatedTotal : null;
+        const difference = hasBudget && complete && estimatedTotal !== null ? budget - estimatedTotal : null;
+        const knownDifference = hasBudget && !complete && knownSubtotal !== null ? budget - knownSubtotal : null;
         return {
-            entries, usable, estimatedTotal, complete, hasBudget, budget,
-            travelers, days, difference,
-            perPerson: estimatedTotal !== null ? estimatedTotal / travelers : null
+            entries, calculable, knownSubtotal, estimatedTotal, complete, currencyConsistent,
+            hasBudget, budget, travelers, days, nights, difference, knownDifference,
+            perPerson: estimatedTotal !== null ? estimatedTotal / travelers : null,
+            missing: entries.filter(item => item.groupEstimate === null)
         };
     }
 
@@ -907,39 +945,42 @@
         };
         const rows = data.entries.map(item => {
             const amountLabel = item.amount === null
-                ? "Price not verified"
-                : `${formatMoney(item.amount, item.currency)}${item.basis ? ` <small>· ${safeEscape(item.basis)}</small>` : ""}`;
+                ? "Price not available"
+                : `${formatMoney(item.amount, item.currency)}${item.basis ? ` <small>· ${safeEscape(item.basis)}</small>` : ` <small>· unit not specified</small>`}${item.groupEstimate !== null ? `<small class="wl-budget-calculated">Estimated group cost: ${formatMoney(item.groupEstimate, item.currency)}</small>` : ""}`;
             return `<div class="wl-smart-budget-row"><span>${safeEscape(item.label)}</span><strong>${amountLabel}</strong></div>`;
         }).join("");
-        let status = `<div class="wl-smart-budget-status neutral">Not enough verified pricing data to judge the full trip cost yet.</div>`;
-        if (data.estimatedTotal !== null && data.hasBudget) {
+        let status = `<div class="wl-smart-budget-status neutral">Not enough usable pricing data to judge the full trip cost yet.</div>`;
+        if (data.complete && data.estimatedTotal !== null && data.hasBudget) {
             if (data.difference >= 0) {
-                status = `<div class="wl-smart-budget-status good"><strong>${formatMoney(data.difference)} under budget</strong><span>${data.complete ? "Estimated total" : "Known-cost subtotal"}: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
+                status = `<div class="wl-smart-budget-status good"><strong>${formatMoney(data.difference)} under budget</strong><span>Estimated trip total: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
             } else {
-                status = `<div class="wl-smart-budget-status over"><strong>${formatMoney(Math.abs(data.difference))} over budget</strong><span>${data.complete ? "Estimated total" : "Known-cost subtotal"}: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
+                status = `<div class="wl-smart-budget-status over"><strong>${formatMoney(Math.abs(data.difference))} over budget</strong><span>Estimated trip total: ${formatMoney(data.estimatedTotal)} · ${formatMoney(data.perPerson)} per person</span></div>`;
             }
-            if (!data.complete) {
-                status += `<p class="wl-smart-budget-note">This is a partial estimate. Some categories are missing or do not specify whether prices are per person, per day, or per room. Do not treat it as a confirmed trip price.</p>`;
-            }
-        } else if (data.estimatedTotal !== null) {
-            status = `<div class="wl-smart-budget-status neutral"><strong>Estimated ${formatMoney(data.estimatedTotal)}</strong><span>${formatMoney(data.perPerson)} per person · ${data.complete ? "based on available research" : "partial estimate"}</span></div>`;
+        } else if (data.knownSubtotal !== null) {
+            const subtotalText = data.hasBudget && data.knownDifference !== null && data.knownDifference < 0
+                ? `${formatMoney(Math.abs(data.knownDifference))} in known costs already exceeds your budget`
+                : "Known-cost subtotal only — full trip affordability is not yet known";
+            status = `<div class="wl-smart-budget-status neutral"><strong>${formatMoney(data.knownSubtotal)} known-cost subtotal</strong><span>${formatMoney(data.knownSubtotal / data.travelers)} per person · ${subtotalText}</span></div><p class="wl-smart-budget-note">Do not treat the unallocated difference as money remaining. Missing or unclear prices must be estimated before we can say the trip is under budget.</p>`;
         }
-        const missing = data.entries.filter(item => item.amount === null).map(item => item.label.toLowerCase());
+        if (!data.currencyConsistent) {
+            status += `<p class="wl-smart-budget-note">The available prices use different currencies. Convert them to one currency before comparing the total with your budget.</p>`;
+        }
+        const missing = data.missing.map(item => item.label.toLowerCase());
         const tips = [];
         if (data.difference !== null && data.difference < 0) {
             tips.push("Compare accommodation options and flexible travel dates first; these often have the largest effect on total cost.");
             tips.push("Keep must-do attractions and reduce optional paid activities before removing experiences that matter to you.");
-        } else if (data.difference !== null && data.difference >= 0) {
+        } else if (data.complete && data.difference !== null && data.difference >= 0) {
             tips.push("Keep part of the remaining budget as a buffer for price changes, meals, and unexpected costs.");
         }
-        if (missing.length) tips.push(`Verify ${missing.join(", ")} before relying on this estimate.`);
+        if (missing.length) tips.push(`Add a usable price and clear unit for ${missing.join(", ")} before relying on a full-trip estimate.`);
         return `
             <section class="wl-smart-budget" aria-label="Smart trip budget">
                 <div class="wl-smart-budget-heading"><div><span class="wl-eyebrow">SMART BUDGET</span><h3>Can this trip fit your budget?</h3></div><span class="wl-budget-pill">${safeEscape(currency)}</span></div>
                 <div class="wl-smart-budget-summary">
                     <div><small>YOUR TOTAL BUDGET</small><strong>${data.hasBudget ? formatMoney(data.budget) : "Not set"}</strong></div>
                     <div><small>TRAVELLERS</small><strong>${data.travelers}</strong></div>
-                    <div><small>DURATION</small><strong>${data.days} days</strong></div>
+                    <div><small>DURATION</small><strong>${data.days} days · ${data.nights} nights</strong></div>
                 </div>
                 <div class="wl-smart-budget-rows">${rows || `<p class="wl-smart-budget-note">No itemized cost estimates were returned by research yet.</p>`}</div>
                 ${status}
@@ -1357,334 +1398,217 @@
        DESTINATION OPTION CARDS
        ======================================================== */
 
-    function addOptionsMessage(
-        candidates
-    ) {
+    function addOptionsMessage(candidates) {
+        // Remove the previous destination options.
+        removeRow(conversationState.optionsRow);
 
-        removeRow(
-            conversationState.optionsRow
+        // Generate the HTML for each destination card.
+        const cards = candidates
+            .map((candidate, index) => {
+                const name = destinationName(candidate);
+                const country = destinationCountry(candidate);
+                const description = destinationDescription(candidate);
+
+                // Retrieve the primary image and available fallbacks.
+                const photoList = images(candidate);
+                const photo = photoList[0] || "";
+
+                // Normalize the destination name for comparison.
+                const destinationKey = name
+                    .toLowerCase()
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+                // Remove attraction labels that duplicate the destination name.
+                const attractionList = attractions(candidate)
+                    .filter((item) => {
+                        const attractionKey = String(item)
+                            .toLowerCase()
+                            .replace(/\s+/g, " ")
+                            .trim();
+
+                        return (
+                            attractionKey !== destinationKey &&
+                            !destinationKey.startsWith(attractionKey) &&
+                            !attractionKey.startsWith(destinationKey)
+                        );
+                    })
+                    .slice(0, 3);
+
+                // Preserve the existing image markup and fallback attributes.
+                const imageMarkup = photo
+                    ? `
+                        <img
+                            class="wl-option-image"
+                            src="${safeEscape(photo)}"
+                            alt="${safeEscape(name)}"
+                            loading="lazy"
+                            data-image-fallbacks="${safeEscape(
+                                JSON.stringify(photoList.slice(1))
+                            )}"
+                        >
+                    `
+                    : "";
+
+                const imagePlaceholder = `
+                    <div
+                        class="wl-image-placeholder"
+                        ${photo ? "hidden" : ""}
+                        aria-label="Destination image unavailable"
+                    >
+                        <span aria-hidden="true">✦</span>
+                        <small>Destination preview</small>
+                    </div>
+                `;
+
+                // Preserve the existing country element and its class.
+                const countryMarkup = country
+                    ? `
+                        <div class="wl-option-country">
+                            ${safeEscape(country)}
+                        </div>
+                    `
+                    : "";
+
+                // Limit the description to a reasonable preview length.
+                const descriptionText = description.length > 190
+                    ? `${description.slice(0, 187)}...`
+                    : description;
+
+                // Generate the attraction markup when attractions are available.
+                const attractionsMarkup = attractionList.length
+                    ? `
+                        <div class="wl-option-attractions">
+                            ${attractionList
+                                .map(
+                                    (item) => `
+                                        <span>${safeEscape(item)}</span>
+                                    `
+                                )
+                                .join("")}
+                        </div>
+                    `
+                    : "";
+
+                // Return the destination card.
+                // The existing HTML structure and CSS class names are preserved.
+                return `
+                    <article
+                        class="wl-option-card"
+                        data-option-index="${index}"
+                    >
+                        <div class="wl-option-image-wrap">
+                            ${imageMarkup}
+                            ${imagePlaceholder}
+                        </div>
+
+                        <div class="wl-option-body">
+                            <div class="wl-option-number">
+                                ${index + 1}
+                            </div>
+
+                            <h3>
+                                ${safeEscape(name)}
+                            </h3>
+
+                            ${countryMarkup}
+
+                            <p>
+                                ${safeEscape(descriptionText)}
+                            </p>
+
+                            ${attractionsMarkup}
+
+                            <div class="wl-option-actions">
+                                <button
+                                    type="button"
+                                    class="wl-secondary-button wl-details-button"
+                                    data-index="${index}"
+                                >
+                                    VIEW DETAILS
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="wl-primary-button wl-select-button"
+                                    data-index="${index}"
+                                >
+                                    SELECT
+                                </button>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+
+        // Display the introduction and destination cards.
+        conversationState.optionsRow = appendAssistantBubble(
+            `
+                <div class="wl-conversation-text">
+                    <strong>
+                        I've found ${candidates.length}
+                        destination${candidates.length === 1 ? "" : "s"}
+                        that fit your request.
+                    </strong>
+
+                    <span>
+                        Take a look at the options below.
+                        You can inspect one in more detail or
+                        choose the one you'd like to build your trip around.
+                    </span>
+                </div>
+
+                <div class="wl-options-grid">
+                    ${cards}
+                </div>
+            `,
+            {
+                wide: true
+            }
         );
 
+        // Stop if the conversation bubble could not be created.
+        const optionsRow = conversationState.optionsRow;
 
-        const cards =
-
-            candidates
-
-                .map(
-                    (
-                        candidate,
-                        index
-                    ) => {
-
-                        const name =
-                            destinationName(
-                                candidate
-                            );
-
-
-                        const country =
-                            destinationCountry(
-                                candidate
-                            );
-
-
-                        const description =
-                            destinationDescription(
-                                candidate
-                            );
-
-
-                        const photoList = images(candidate);
-                        const photo = photoList[0] || "";
-
-
-                        const attractionList =
-                            attractions(
-                                candidate
-                            )
-                            .slice(
-                                0,
-                                3
-                            );
-
-
-                        return `
-
-                            <article
-                                class="wl-option-card"
-                                data-option-index="${index}"
-                            >
-
-                                <div class="wl-option-image-wrap">
-                                    ${photo ? `
-                                        <img class="wl-option-image" src="${safeEscape(photo)}" alt="${safeEscape(name)}" loading="lazy" data-image-fallbacks="${safeEscape(JSON.stringify(photoList.slice(1)))}">
-                                    ` : ""}
-                                    <div class="wl-image-placeholder" ${photo ? "hidden" : ""} aria-label="Destination image unavailable"><span aria-hidden="true">✦</span><small>Destination preview</small></div>
-                                </div>
-
-
-                                <div
-                                    class="wl-option-body"
-                                >
-
-                                    <div
-                                        class="wl-option-number"
-                                    >
-                                        ${index + 1}
-                                    </div>
-
-
-                                    <h3>
-                                        ${safeEscape(
-                                            name
-                                        )}
-                                    </h3>
-
-
-                                    ${
-                                        country
-
-                                            ? `
-
-                                                <div
-                                                    class="wl-option-country"
-                                                >
-                                                    ${safeEscape(
-                                                        country
-                                                    )}
-                                                </div>
-
-                                              `
-
-                                            : ""
-                                    }
-
-
-                                    <p>
-                                        ${safeEscape(
-
-                                            description.length >
-                                            190
-
-                                                ? description.slice(
-                                                    0,
-                                                    187
-                                                ) + "..."
-
-                                                : description
-
-                                        )}
-                                    </p>
-
-
-                                    ${
-                                        attractionList.length
-
-                                            ? `
-
-                                                <div
-                                                    class="wl-option-attractions"
-                                                >
-
-                                                    ${
-                                                        attractionList
-
-                                                            .map(
-                                                                item => `
-
-                                                                    <span>
-                                                                        ${safeEscape(
-                                                                            item
-                                                                        )}
-                                                                    </span>
-
-                                                                `
-                                                            )
-
-                                                            .join("")
-                                                    }
-
-                                                </div>
-
-                                              `
-
-                                            : ""
-                                    }
-
-
-                                    <div
-                                        class="wl-option-actions"
-                                    >
-
-                                        <button
-                                            type="button"
-                                            class="wl-secondary-button wl-details-button"
-                                            data-index="${index}"
-                                        >
-                                            VIEW DETAILS
-                                        </button>
-
-
-                                        <button
-                                            type="button"
-                                            class="wl-primary-button wl-select-button"
-                                            data-index="${index}"
-                                        >
-                                            SELECT
-                                        </button>
-
-                                    </div>
-
-                                </div>
-
-                            </article>
-
-                        `;
-
-                    }
-                )
-
-                .join("");
-
-
-        conversationState.optionsRow =
-
-            appendAssistantBubble(
-
-                `
-
-                    <div
-                        class="wl-conversation-text"
-                    >
-
-                        <strong>
-                            I've found three destinations that fit your request.
-                        </strong>
-
-
-                        <span>
-                            Take a look at the options below.
-                            You can inspect one in more detail or
-                            choose the one you'd like to build your trip around.
-                        </span>
-
-                    </div>
-
-
-                    <div
-                        class="wl-options-grid"
-                    >
-
-                        ${cards}
-
-                    </div>
-
-                `,
-
-                {
-                    wide:
-                        true
-                }
-
-            );
-
-
-        if (
-            !conversationState.optionsRow
-        ) {
-
+        if (!optionsRow) {
             return;
-
         }
 
+        // Attach handlers to the Details buttons.
+        optionsRow
+            .querySelectorAll(".wl-details-button")
+            .forEach((button) => {
+                button.addEventListener("click", () => {
+                    const index = Number(button.dataset.index);
+                    const candidate = currentCandidates[index];
 
-        conversationState.optionsRow
+                    if (
+                        candidate &&
+                        typeof showDestination === "function"
+                    ) {
+                        showDestination(candidate);
+                    }
+                });
+            });
 
-            .querySelectorAll(
-                ".wl-details-button"
-            )
+        // Attach handlers to the Select buttons.
+        optionsRow
+            .querySelectorAll(".wl-select-button")
+            .forEach((button) => {
+                button.addEventListener("click", () => {
+                    const index = Number(button.dataset.index);
 
-            .forEach(
-                button => {
+                    selectTrip(index);
+                });
+            });
 
-                    button.addEventListener(
-                        "click",
-                        () => {
-
-                            const index =
-                                Number(
-                                    button.dataset.index
-                                );
-
-
-                            const candidate =
-                                currentCandidates[
-                                    index
-                                ];
-
-
-                            if (
-                                candidate &&
-                                typeof showDestination ===
-                                "function"
-                            ) {
-
-                                showDestination(
-                                    candidate
-                                );
-
-                            }
-
-                        }
-                    );
-
-                }
-            );
-
-
-        conversationState.optionsRow
-
-            .querySelectorAll(
-                ".wl-select-button"
-            )
-
-            .forEach(
-                button => {
-
-                    button.addEventListener(
-                        "click",
-                        () => {
-
-                            const index =
-                                Number(
-                                    button.dataset.index
-                                );
-
-
-                            selectTrip(
-                                index
-                            );
-
-                        }
-                    );
-
-                }
-            );
-
-
-        const messages =
-            byId(
-                "tripChatMessages"
-            );
-
+        // Scroll the conversation to the newest content.
+        const messages = byId("tripChatMessages");
 
         if (messages) {
-
-            messages.scrollTop =
-                messages.scrollHeight;
-
+            messages.scrollTop = messages.scrollHeight;
         }
-
     }
 
 
@@ -2234,9 +2158,31 @@
 
         .trip-chat-row.conversation-wide > div { width: 100%; max-width: 100%; }
         .conversation-bubble { overflow: hidden; }
-        .wl-conversation-text { display: grid; gap: 7px; margin: 0 0 18px; line-height: 1.55; text-align: left; }
-        .wl-conversation-text strong { color: #10294a; font-size: 16px; }
-        .wl-conversation-text span { color: #64748b; font-size: 14px; }
+        .wl-conversation-text {
+            display: grid;
+            width: 100%;
+            gap: 6px;
+            margin: 0 0 8px;
+            padding: 0;
+            line-height: 1.5;
+            text-align: left;
+            direction: ltr;
+        }
+
+        .wl-conversation-text strong,
+        .wl-conversation-text span {
+            text-align: left;
+        }
+
+        .wl-options-grid {
+            display: grid;
+            width: 100%;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            align-items: stretch;
+            gap: 14px;
+            margin: 8px 0 0;
+            padding: 0;
+        }
 
         .wl-thinking { display: grid; gap: 12px; min-width: 0; padding: 8px 0; }
         .wl-thinking-title { display: flex; align-items: center; gap: 10px; color: #10294a; font-size: 16px; font-weight: 750; }
@@ -2257,13 +2203,57 @@
         .wl-image-placeholder[hidden] { display: none !important; }
         .wl-image-placeholder span { font-size: 28px; line-height: 1; }
         .wl-image-placeholder small { color: #6d829c; font-size: 11px; font-weight: 650; }
-        .wl-option-body { display: flex; flex: 1; flex-direction: column; align-items: stretch; padding: 18px; text-align: left; }
-        .wl-option-number { display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 12px; border-radius: 9px; background: #edf4ff; color: #1e5edb; font-size: 12px; font-weight: 800; }
-        .wl-option-body h3 { margin: 0; color: #10294a; font-size: clamp(16px, 1.3vw, 20px); font-weight: 750; line-height: 1.3; overflow-wrap: anywhere; }
-        .wl-option-country { margin-top: 6px; color: #3478f6; font-size: 12px; font-weight: 650; }
-        .wl-option-body p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; margin: 12px 0 15px; color: #60718a; font-size: 13px; line-height: 1.6; text-align: left; }
-        .wl-option-attractions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
-        .wl-option-attractions span { padding: 6px 8px; border-radius: 7px; background: #f1f5f9; color: #52647c; font-size: 11px; line-height: 1.35; }
+.wl-option-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding: 16px;
+    text-align: left;
+    direction: ltr;
+    min-width: 0;
+}
+
+.wl-option-number {
+    align-self: flex-start;
+    margin: 0 0 10px;
+}
+
+.wl-option-title {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.wl-option-country {
+    width: 100%;
+    margin: 6px 0 0;
+    text-align: left;
+}
+
+.wl-option-description {
+    width: 100%;
+    margin: 12px 0;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.wl-option-attractions span {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    border-radius: 9px;
+    background: #f1f5f9;
+    color: #52647c;
+    font-size: 12px;
+    line-height: 1.45;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
         .wl-option-actions, .wl-confirm-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
         .wl-option-actions { width: 100%; margin-top: auto; padding-top: 8px; }
         .wl-option-actions button { flex: 1 1 105px; min-height: 42px; }
@@ -2418,6 +2408,7 @@
         .wl-smart-budget-row > span { color:#5d6f86; }
         .wl-smart-budget-row > strong { max-width:65%; color:#10294a; text-align:right; font-size:12px; }
         .wl-smart-budget-row small { display:block; margin-top:3px; color:#8492a5; font-size:10px; font-weight:500; }
+        .wl-smart-budget-row .wl-budget-calculated { color:#48658a; font-weight:650; }
         .wl-smart-budget-status { display:grid; gap:4px; margin-top:10px; padding:11px 12px; border-radius:10px; font-size:12px; }
         .wl-smart-budget-status > strong { font-size:14px; }
         .wl-smart-budget-status > span { line-height:1.45; }

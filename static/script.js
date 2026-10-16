@@ -2263,86 +2263,78 @@ function getCost(
 
 ============================================================ */
 
-function getEstimatedWorkerCost(candidate) {
+function getEstimatedWorkerCost(
+    candidate
+) {
 
-    const duration = Math.max(1, Number(
-        basicTripData?.duration_days || candidate?.duration_days || 1
-    ));
-    const travelers = Math.max(1, Number(basicTripData?.travelers || 1));
+    const duration =
+        Number(
+            basicTripData?.duration_days ||
+            candidate?.duration_days ||
+            0
+        );
 
-    // Prefer the newer research-agent schema.
-    const researchCosts = candidate?.cost_estimates
-        || candidate?.research?.cost_estimates
-        || candidate?.research_result?.cost_estimates
-        || {};
 
-    const parseAmount = (entry) => {
-        const raw = entry && typeof entry === "object"
-            ? (entry.amount ?? entry.value ?? entry.estimated_cost)
-            : entry;
-        if (raw === null || raw === undefined || raw === "") return null;
-        const amount = typeof raw === "number"
-            ? raw
-            : Number(String(raw).replace(/[^0-9.\-]/g, ""));
-        return Number.isFinite(amount) && amount >= 0 ? amount : null;
-    };
+    const traveling =
+        getCost(
+            candidate,
+            "traveling_cost"
+        );
 
-    const explicitTotal = parseAmount(
-        researchCosts.total ?? researchCosts.estimated_total
-        ?? candidate?.estimated_cost ?? candidate?.research_estimate
-    );
-    if (explicitTotal !== null) return explicitTotal;
 
-    const categories = [
-        { key: "travel_to_destination", kind: "travel" },
-        { key: "accommodation_per_night", kind: "night" },
-        { key: "food_per_day", kind: "food" },
-        { key: "local_transport_per_day", kind: "local" }
-    ];
+    const residence =
+        getCost(
+            candidate,
+            "residence_cost"
+        );
 
-    let subtotal = 0;
-    let calculableCount = 0;
-    for (const category of categories) {
-        const entry = researchCosts[category.key];
-        const amount = parseAmount(entry);
-        const basis = String(entry && typeof entry === "object" ? entry.basis || "" : "").toLowerCase();
-        if (amount === null) continue;
 
-        let multiplier = null;
-        if (category.kind === "travel" && /per person|per traveler|per traveller|each person/.test(basis)) {
-            multiplier = travelers;
-        } else if (category.kind === "night" && /per night|per room|nightly/.test(basis)) {
-            multiplier = duration;
-        } else if ((category.kind === "food" || category.kind === "local") &&
-                   /per person|per traveler|per traveller|daily per person/.test(basis)) {
-            multiplier = travelers * duration;
-        } else if (/per day|daily/.test(basis)) {
-            multiplier = duration;
-        }
+    const food =
+        getCost(
+            candidate,
+            "average_food_cost"
+        );
 
-        // Do not pretend we know the unit if research did not specify it.
-        if (multiplier !== null) {
-            subtotal += amount * multiplier;
-            calculableCount += 1;
-        }
-    }
 
-    if (calculableCount > 0) return Math.round(subtotal * 100) / 100;
+    const localTravel =
+        getCost(
+            candidate,
+            "daily_average_travel_cost"
+        );
 
-    // Backwards compatibility with older research payloads.
-    const traveling = getCost(candidate, "traveling_cost");
-    const residence = getCost(candidate, "residence_cost");
-    const food = getCost(candidate, "average_food_cost");
-    const localTravel = getCost(candidate, "daily_average_travel_cost");
 
-    if (traveling === null && residence === null && food === null && localTravel === null) {
+    if (
+        traveling === null &&
+        residence === null &&
+        food === null &&
+        localTravel === null
+    ) {
+
         return null;
+
     }
 
-    return (traveling || 0) + (residence || 0)
-        + ((food || 0) * duration)
-        + ((localTravel || 0) * duration);
+
+    return (
+
+        (traveling || 0) +
+
+        (residence || 0) +
+
+        (
+            (food || 0) *
+            duration
+        ) +
+
+        (
+            (localTravel || 0) *
+            duration
+        )
+
+    );
+
 }
+
 
 /* ============================================================
    CHAT
@@ -2543,6 +2535,11 @@ function openTripChat() {
     scene.classList.add(
         "open"
     );
+
+
+    const plannerPage = document.getElementById("page-planner");
+
+    plannerPage?.classList.add("planner-chat-active");
 
 
     if (!chatStarted) {
@@ -4926,6 +4923,9 @@ function initializeTripChat() {
             }
 
 
+            document.getElementById("page-planner")?.classList.remove("planner-chat-active");
+
+
             showPage(
                 "planner"
             );
@@ -5070,6 +5070,9 @@ function resetPlanner() {
     }
 
 
+    document.getElementById("page-planner")?.classList.remove("planner-chat-active");
+
+
     if (messages) {
 
         messages.innerHTML =
@@ -5143,30 +5146,18 @@ function resetPlanner() {
 
 function scrollToResultsIfNeeded() {
 
-    const results =
-        document.getElementById(
-            "resultsSection"
-        );
+    const workspace = document.getElementById("tripChatScene");
 
-
-    if (!results) {
+    if (!workspace) {
         return;
     }
 
-
-    setTimeout(
-        () => {
-
-            results.scrollIntoView({
-                behavior:
-                    "smooth",
-                block:
-                    "start"
-            });
-
-        },
-        100
-    );
+    setTimeout(() => {
+        workspace.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+    }, 100);
 
 }
 
